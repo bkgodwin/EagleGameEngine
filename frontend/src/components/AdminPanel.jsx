@@ -7,7 +7,7 @@ import {
 export default function AdminPanel({ onClose }) {
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
-  const [siteSettings, setSiteSettings] = useState({ registration_enabled: true, max_players: 16, storage_limit_mb: 500 });
+  const [siteSettings, setSiteSettings] = useState({ registration_open: true, max_players_per_room: 10, maintenance_mode: false, motd: '' });
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -143,32 +143,42 @@ export default function AdminPanel({ onClose }) {
         {tab === 'settings' && !loading && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Registration Enabled</span>
+              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Registration Open</span>
               <input
                 type="checkbox"
-                checked={!!siteSettings.registration_enabled}
-                onChange={e => setSiteSettings(s => ({ ...s, registration_enabled: e.target.checked }))}
+                checked={!!siteSettings.registration_open}
+                onChange={e => setSiteSettings(s => ({ ...s, registration_open: e.target.checked }))}
                 style={{ width: 'auto' }}
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Max Players</span>
+              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Max Players Per Room</span>
               <input
-                type="range" min="2" max="64" step="2"
-                value={siteSettings.max_players || 16}
-                onChange={e => setSiteSettings(s => ({ ...s, max_players: parseInt(e.target.value) }))}
+                type="range" min="2" max="30" step="1"
+                value={siteSettings.max_players_per_room || 10}
+                onChange={e => setSiteSettings(s => ({ ...s, max_players_per_room: parseInt(e.target.value) }))}
                 style={{ flex: 1 }}
               />
-              <span style={{ width: '36px', textAlign: 'right', fontSize: '13px' }}>{siteSettings.max_players || 16}</span>
+              <span style={{ width: '36px', textAlign: 'right', fontSize: '13px' }}>{siteSettings.max_players_per_room || 10}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Storage Limit (MB)</span>
+              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Maintenance Mode</span>
               <input
-                type="number"
-                value={siteSettings.storage_limit_mb || 500}
-                onChange={e => setSiteSettings(s => ({ ...s, storage_limit_mb: parseInt(e.target.value) }))}
-                style={{ flex: 1 }}
-                min="10"
+                type="checkbox"
+                checked={!!siteSettings.maintenance_mode}
+                onChange={e => setSiteSettings(s => ({ ...s, maintenance_mode: e.target.checked }))}
+                style={{ width: 'auto' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ width: '200px', color: 'var(--text-muted)', fontSize: '13px' }}>Message of the Day</span>
+              <input
+                type="text"
+                value={siteSettings.motd || ''}
+                onChange={e => setSiteSettings(s => ({ ...s, motd: e.target.value }))}
+                placeholder="Welcome message shown to users…"
+                style={{ flex: 1, padding: '6px 10px' }}
+                maxLength={200}
               />
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -181,10 +191,10 @@ export default function AdminPanel({ onClose }) {
         {tab === 'stats' && !loading && stats && (
           <div className="stat-cards">
             {[
-              { label: 'Total Users', value: stats.total_users ?? '—', icon: '👤' },
-              { label: 'Total Projects', value: stats.total_projects ?? '—', icon: '🎮' },
-              { label: 'Total Assets', value: stats.total_assets ?? '—', icon: '📦' },
-              { label: 'Storage Used', value: stats.total_storage_mb != null ? stats.total_storage_mb.toFixed(1) + ' MB' : '—', icon: '💾' },
+              { label: 'Total Users', value: stats.users ?? '—', icon: '👤' },
+              { label: 'Total Projects', value: stats.projects ?? '—', icon: '🎮' },
+              { label: 'Total Assets', value: stats.assets ?? '—', icon: '📦' },
+              { label: 'Storage Used', value: stats.total_asset_bytes != null ? (stats.total_asset_bytes / (1024 * 1024)).toFixed(1) + ' MB' : '—', icon: '💾' },
             ].map(s => (
               <div key={s.label} className="stat-card">
                 <div style={{ fontSize: '28px', marginBottom: '6px' }}>{s.icon}</div>

@@ -41,4 +41,7 @@ export const useStore = create((set) => ({
 
   editorMode: 'select',
   setEditorMode: (mode) => set({ editorMode: mode }),
+
+  onlineCount: 0,
+  setOnlineCount: (n) => set({ onlineCount: n }),
 }));

@@ -585,10 +585,31 @@ const Viewport = forwardRef((props, ref) => {
     applySettings(settings) {
       const { renderer, scene } = stateRef.current;
       if (!renderer) return;
-      if (settings.shadowsEnabled !== undefined) renderer.shadowMap.enabled = settings.shadowsEnabled;
+      // Shadow quality
+      if (settings.shadowQuality !== undefined || settings.shadowsEnabled !== undefined) {
+        const quality = settings.shadowQuality ?? storeRef.current.settings.shadowQuality;
+        const enabled = settings.shadowsEnabled !== undefined ? settings.shadowsEnabled : storeRef.current.settings.shadowsEnabled;
+        if (!enabled || quality === 'off') {
+          renderer.shadowMap.enabled = false;
+        } else {
+          renderer.shadowMap.enabled = true;
+          if (quality === 'low') renderer.shadowMap.type = THREE.BasicShadowMap;
+          else if (quality === 'medium') renderer.shadowMap.type = THREE.PCFShadowMap;
+          else if (quality === 'high') renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        }
+        renderer.shadowMap.needsUpdate = true;
+      }
+      // Render distance / fog
       if (settings.renderDistance !== undefined && scene.fog) {
         scene.fog.near = settings.renderDistance * 0.5;
         scene.fog.far = settings.renderDistance;
+      }
+      // Pixel ratio based on texture quality
+      if (settings.textureQuality !== undefined) {
+        const base = Math.min(window.devicePixelRatio, 2);
+        if (settings.textureQuality === 'low') renderer.setPixelRatio(Math.min(base, 0.75));
+        else if (settings.textureQuality === 'medium') renderer.setPixelRatio(Math.min(base, 1));
+        else renderer.setPixelRatio(base);
       }
     },
   }));

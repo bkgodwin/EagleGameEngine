@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getProjects, createProject, getProject, deleteProject, clearToken } from '../api/index.js';
+import { getProjects, createProject, getProject, deleteProject, renameProject, exportProject, clearToken } from '../api/index.js';
 import { useStore } from '../store/index.js';
 import '../styles/theme.css';
 
@@ -11,6 +11,8 @@ export default function Dashboard({ navigate }) {
   const [creating, setCreating] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
 
   useEffect(() => {
     fetchProjects();
@@ -63,6 +65,33 @@ export default function Dashboard({ navigate }) {
       setProjects(prev => prev.filter(p => p.id !== id));
     } catch (err) {
       setError('Failed to delete: ' + err.message);
+    }
+  }
+
+  async function handleExport(e, id) {
+    e.stopPropagation();
+    try {
+      await exportProject(id);
+    } catch (err) {
+      setError('Export failed: ' + err.message);
+    }
+  }
+
+  function startRename(e, proj) {
+    e.stopPropagation();
+    setRenamingId(proj.id);
+    setRenameValue(proj.name);
+  }
+
+  async function submitRename(proj) {
+    const trimmed = renameValue.trim();
+    setRenamingId(null);
+    if (!trimmed || trimmed === proj.name) return;
+    try {
+      const updated = await renameProject(proj.id, trimmed);
+      setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, name: updated.name } : p));
+    } catch (err) {
+      setError('Rename failed: ' + err.message);
     }
   }
 
@@ -147,13 +176,36 @@ export default function Dashboard({ navigate }) {
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                   <span style={{ fontSize: '28px' }}>🎮</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--color-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj.name}</div>
+                    {renamingId === proj.id ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onBlur={() => submitRename(proj)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') submitRename(proj);
+                          if (e.key === 'Escape') setRenamingId(null);
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        style={{ width: '100%', fontSize: '14px', fontWeight: 700, padding: '2px 6px' }}
+                        maxLength={80}
+                      />
+                    ) : (
+                      <div
+                        style={{ fontWeight: 700, fontSize: '15px', color: 'var(--color-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                        onDoubleClick={e => startRename(e, proj)}
+                        title="Double-click to rename"
+                      >
+                        {proj.name}
+                      </div>
+                    )}
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                       Updated {formatDate(proj.updated_at || proj.created_at)}
                     </div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                <div style={{ display: 'flex', gap: '8px', marginTop: 'auto', flexWrap: 'wrap' }}>
                   <button
                     className="btn btn-primary"
                     style={{ flex: 1 }}
@@ -163,10 +215,26 @@ export default function Dashboard({ navigate }) {
                   </button>
                   <button
                     className="btn btn-ghost"
-                    style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                    style={{ fontSize: '12px', padding: '4px 10px' }}
+                    onClick={e => startRename(e, proj)}
+                    title="Rename project"
+                  >
+                    ✏ Rename
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: '12px', padding: '4px 10px' }}
+                    onClick={e => handleExport(e, proj.id)}
+                    title="Export project JSON"
+                  >
+                    ⬇ Export
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)', fontSize: '12px', padding: '4px 10px' }}
                     onClick={() => handleDelete(proj.id, proj.name)}
                   >
-                    Delete
+                    🗑 Delete
                   </button>
                 </div>
               </div>
@@ -177,3 +245,4 @@ export default function Dashboard({ navigate }) {
     </div>
   );
 }
+

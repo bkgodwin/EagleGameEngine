@@ -3,7 +3,7 @@ import { useStore } from '../store/index.js';
 import { clearToken } from '../api/index.js';
 
 export default function Toolbar({ navigate, viewportRef, onSettings, onAdmin, onDocs }) {
-  const { user, isPlaying, setIsPlaying, editorMode, setEditorMode, currentProject } = useStore();
+  const { user, isPlaying, setIsPlaying, editorMode, setEditorMode, currentProject, onlineCount } = useStore();
   const [saved, setSaved] = useState(false);
 
   const handleSave = async () => {
@@ -100,7 +100,7 @@ export default function Toolbar({ navigate, viewportRef, onSettings, onAdmin, on
         </span>
       )}
       <span style={{ color: 'var(--text-muted)', fontSize: '12px', marginRight: '8px' }}>
-        🌐 0 online
+        🌐 {onlineCount} online
       </span>
       <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
         {user?.username || user?.email || ''}
