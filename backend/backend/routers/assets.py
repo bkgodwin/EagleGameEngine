@@ -16,7 +16,7 @@ from ..models import Asset, AssetOut, User
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
-UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
+UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
 MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB per file

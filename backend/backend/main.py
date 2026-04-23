@@ -25,7 +25,7 @@ from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
-FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
 # ---------------------------------------------------------------------------
