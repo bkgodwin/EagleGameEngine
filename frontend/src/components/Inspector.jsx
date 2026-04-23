@@ -1,0 +1,379 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { HexColorPicker } from 'react-colorful';
+import { useStore } from '../store/index.js';
+
+function XYZInput({ label, value, onChange, step = 0.1 }) {
+  return (
+    <div className="field-group">
+      <div className="section-label" style={{ padding: '6px 0 2px', fontSize: '10px' }}>{label}</div>
+      <div className="xyz-group">
+        {['x', 'y', 'z'].map(axis => (
+          <div className="xyz-input-wrap" key={axis}>
+            <span style={{ color: axis === 'x' ? '#ef5350' : axis === 'y' ? '#66bb6a' : '#42a5f5' }}>{axis.toUpperCase()}</span>
+            <input
+              type="number"
+              step={step}
+              value={value?.[axis] ?? 0}
+              onChange={e => onChange(axis, e.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function Inspector({ viewportRef }) {
+  const { sceneObjects, selectedObjectId, updateSceneObject } = useStore();
+  const obj = sceneObjects.find(o => o.id === selectedObjectId);
+
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const colorPickerRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target)) {
+        setShowColorPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  if (!obj) {
+    return (
+      <div className="inspector">
+        <div className="panel-header"><span>Inspector</span></div>
+        <p style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '13px' }}>
+          Select an object to inspect it.
+        </p>
+      </div>
+    );
+  }
+
+  const updateTransform = (field, axis, value) => {
+    const num = parseFloat(value);
+    if (isNaN(num)) return;
+    const newVal = { ...(obj[field] || {}), [axis]: num };
+    updateSceneObject(obj.id, { [field]: newVal });
+    if (viewportRef?.current?.updateObjectTransform) {
+      viewportRef.current.updateObjectTransform(
+        obj.id,
+        field === 'position' ? newVal : (obj.position || { x: 0, y: 0, z: 0 }),
+        field === 'rotation' ? newVal : (obj.rotation || { x: 0, y: 0, z: 0 }),
+        field === 'scale' ? newVal : (obj.scale || { x: 1, y: 1, z: 1 })
+      );
+    }
+  };
+
+  const updateMaterial = (updates) => {
+    const newMat = { ...(obj.material || {}), ...updates };
+    updateSceneObject(obj.id, { material: newMat });
+    if (viewportRef?.current?.updateObjectMaterial) {
+      viewportRef.current.updateObjectMaterial(obj.id, newMat.color || '#888888', !!newMat.wireframe);
+    }
+  };
+
+  const updateLight = (updates) => {
+    const newLight = { ...(obj.lightProps || {}), ...updates };
+    updateSceneObject(obj.id, { lightProps: newLight });
+    if (viewportRef?.current?.updateObjectLight) {
+      viewportRef.current.updateObjectLight(obj.id, newLight);
+    }
+  };
+
+  const isMesh = ['cube', 'sphere', 'plane'].includes(obj.type);
+  const isLight = ['directionalLight', 'pointLight', 'spotlight'].includes(obj.type);
+  const isTerrain = obj.type === 'terrain';
+  const isSpawn = obj.type === 'spawnPoint';
+  const isKill = obj.type === 'killVolume';
+
+  const mat = obj.material || {};
+  const lightProps = obj.lightProps || { color: '#ffffff', intensity: 1, range: 20, angle: 30, castShadow: false };
+
+  return (
+    <div className="inspector">
+      <div className="panel-header">
+        <span>Inspector</span>
+        <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '11px' }}>{obj.type}</span>
+      </div>
+
+      {/* Name */}
+      <div className="inspector-section">
+        <div className="inspector-section-title">🏷 Gameplay</div>
+        <div className="field-group">
+          <div className="field-row">
+            <span className="field-label">Name</span>
+            <input
+              type="text"
+              value={obj.name || ''}
+              onChange={e => updateSceneObject(obj.id, { name: e.target.value })}
+              style={{ flex: 1 }}
+            />
+          </div>
+          <div className="field-row">
+            <span className="field-label">Tags</span>
+            <input
+              type="text"
+              value={obj.tags || ''}
+              onChange={e => updateSceneObject(obj.id, { tags: e.target.value })}
+              placeholder="tag1, tag2"
+              style={{ flex: 1 }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Transform */}
+      <div className="inspector-section">
+        <div className="inspector-section-title">📐 Transform</div>
+        <XYZInput
+          label="Position"
+          value={obj.position || { x: 0, y: 0, z: 0 }}
+          onChange={(axis, val) => updateTransform('position', axis, val)}
+        />
+        <XYZInput
+          label="Rotation"
+          value={obj.rotation || { x: 0, y: 0, z: 0 }}
+          onChange={(axis, val) => updateTransform('rotation', axis, val)}
+        />
+        <XYZInput
+          label="Scale"
+          value={obj.scale || { x: 1, y: 1, z: 1 }}
+          onChange={(axis, val) => updateTransform('scale', axis, val)}
+          step={0.01}
+        />
+      </div>
+
+      {/* Material */}
+      {(isMesh || isTerrain) && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">🎨 Material</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Color</span>
+              <div style={{ position: 'relative' }} ref={colorPickerRef}>
+                <div
+                  onClick={() => setShowColorPicker(v => !v)}
+                  style={{ width: '36px', height: '22px', borderRadius: '3px', border: '1px solid var(--border-color)', cursor: 'pointer', background: mat.color || '#888888' }}
+                />
+                {showColorPicker && (
+                  <div className="color-picker-popover" style={{ left: 0, top: '28px' }}>
+                    <HexColorPicker
+                      color={mat.color || '#888888'}
+                      onChange={(c) => updateMaterial({ color: c })}
+                    />
+                    <div style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Hex:</span>
+                      <input
+                        type="text"
+                        value={mat.color || '#888888'}
+                        onChange={e => updateMaterial({ color: e.target.value })}
+                        style={{ width: '80px', fontSize: '12px', padding: '2px 6px' }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>{mat.color || '#888888'}</span>
+            </div>
+            <div className="field-row" style={{ marginTop: '4px' }}>
+              <span className="field-label">Wireframe</span>
+              <input
+                type="checkbox"
+                checked={!!mat.wireframe}
+                onChange={e => updateMaterial({ wireframe: e.target.checked })}
+                style={{ width: 'auto', padding: 0 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Light properties */}
+      {isLight && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">💡 Light</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Color</span>
+              <input
+                type="color"
+                value={lightProps.color || '#ffffff'}
+                onChange={e => updateLight({ color: e.target.value })}
+                style={{ width: '36px', height: '22px', padding: 0, border: 'none', cursor: 'pointer', background: 'none' }}
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Intensity</span>
+              <input
+                type="range"
+                min="0" max="10" step="0.1"
+                value={lightProps.intensity ?? 1}
+                onChange={e => updateLight({ intensity: parseFloat(e.target.value) })}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: '11px', width: '28px', textAlign: 'right' }}>{(lightProps.intensity ?? 1).toFixed(1)}</span>
+            </div>
+            {(obj.type === 'pointLight' || obj.type === 'spotlight') && (
+              <div className="field-row">
+                <span className="field-label">Range</span>
+                <input
+                  type="number"
+                  value={lightProps.range ?? 20}
+                  onChange={e => updateLight({ range: parseFloat(e.target.value) })}
+                  step="1" min="0"
+                  style={{ flex: 1 }}
+                />
+              </div>
+            )}
+            {obj.type === 'spotlight' && (
+              <div className="field-row">
+                <span className="field-label">Angle</span>
+                <input
+                  type="number"
+                  value={lightProps.angle ?? 30}
+                  onChange={e => updateLight({ angle: parseFloat(e.target.value) })}
+                  step="1" min="1" max="89"
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>°</span>
+              </div>
+            )}
+            <div className="field-row">
+              <span className="field-label">Shadows</span>
+              <input
+                type="checkbox"
+                checked={!!lightProps.castShadow}
+                onChange={e => updateLight({ castShadow: e.target.checked })}
+                style={{ width: 'auto', padding: 0 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Terrain tools */}
+      {isTerrain && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">🏔 Terrain Sculpt</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Tool</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {['raise', 'lower', 'smooth'].map(tool => (
+                  <label key={tool} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '12px' }}>
+                    <input
+                      type="radio"
+                      name="terrain-tool"
+                      value={tool}
+                      checked={(obj.terrainTool || 'raise') === tool}
+                      onChange={() => updateSceneObject(obj.id, { terrainTool: tool })}
+                      style={{ width: 'auto', padding: 0 }}
+                    />
+                    {tool.charAt(0).toUpperCase() + tool.slice(1)}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Brush Size</span>
+              <input
+                type="range"
+                min="1" max="30" step="0.5"
+                value={obj.brushSize || 5}
+                onChange={e => updateSceneObject(obj.id, { brushSize: parseFloat(e.target.value) })}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: '11px', width: '24px', textAlign: 'right' }}>{obj.brushSize || 5}</span>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Strength</span>
+              <input
+                type="range"
+                min="0.01" max="1" step="0.01"
+                value={obj.brushStrength || 0.1}
+                onChange={e => updateSceneObject(obj.id, { brushStrength: parseFloat(e.target.value) })}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: '11px', width: '30px', textAlign: 'right' }}>{(obj.brushStrength || 0.1).toFixed(2)}</span>
+            </div>
+            <div style={{ paddingTop: '4px' }}>
+              <label style={{ display: 'block', cursor: 'pointer' }}>
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: '12px', width: '100%', justifyContent: 'center' }}
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    input.onchange = (e) => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const img = new Image();
+                        img.onload = () => {
+                          const canvas = document.createElement('canvas');
+                          canvas.width = img.width; canvas.height = img.height;
+                          const ctx = canvas.getContext('2d');
+                          ctx.drawImage(img, 0, 0);
+                          const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                          if (viewportRef?.current?.importHeightmap) {
+                            viewportRef.current.importHeightmap(obj.id, imageData);
+                          }
+                        };
+                        img.src = ev.target.result;
+                      };
+                      reader.readAsDataURL(file);
+                    };
+                    input.click();
+                  }}
+                >
+                  📥 Import Heightmap
+                </button>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Spawn Point */}
+      {isSpawn && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">🚩 Spawn Point</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Index</span>
+              <input
+                type="number"
+                value={obj.spawnIndex ?? 0}
+                onChange={e => updateSceneObject(obj.id, { spawnIndex: parseInt(e.target.value) || 0 })}
+                min="0"
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kill Volume */}
+      {isKill && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">💀 Kill Volume</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Message</span>
+              <input
+                type="text"
+                value={obj.deathMessage || 'You were killed!'}
+                onChange={e => updateSceneObject(obj.id, { deathMessage: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
