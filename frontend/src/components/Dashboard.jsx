@@ -284,7 +284,7 @@ export default function Dashboard({ navigate }) {
                   <div key={room.room_id} style={{ background: 'var(--bg-dark)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--color-accent)' }}>
-                        {room.host_username}&apos;s Server
+                        {room.host_username}'s Server
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
                         {room.project_name} · {room.player_count}/{room.max_players} players

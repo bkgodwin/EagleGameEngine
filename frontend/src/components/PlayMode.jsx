@@ -365,9 +365,6 @@ export default function PlayMode({ navigate }) {
 
           // Check if hit an AI bot
           if (result.id && result.id.startsWith('bot_')) {
-            const agentId = result.id.replace(/^bot_/, '');
-            // Actually eagleId is stored on mesh userData from PlayMode scene building
-            // Just send damage to the agent via API
             const token = getToken();
             fetch(`/api/rooms/${roomId}/ai/${result.id}/damage`, {
               method: 'POST',
@@ -499,7 +496,10 @@ export default function PlayMode({ navigate }) {
       floorTex.dispose();
       renderer.dispose();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // PlayMode sets up the entire 3D scene on mount. Re-running when sceneObjects etc.
+  // change would destroy and recreate the whole scene mid-play, which is not desired.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 1000 }}>

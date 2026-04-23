@@ -48,7 +48,7 @@ export default function Editor({ navigate }) {
       }
     }, 2000);
     return () => clearTimeout(autosaveTimer.current);
-  }, [sceneObjects]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sceneObjects, currentProject, isPlaying]); // currentProject and isPlaying guard the save, sceneObjects triggers it
 
   if (isPlaying) return <PlayMode navigate={navigate} />;
 
