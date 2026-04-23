@@ -176,28 +176,24 @@ class AIManager:
         killed = agent.take_damage(amount)
         return {"agent_id": agent_id, "health": agent.health, "killed": killed}
 
-    async def start(self, tick_rate: float = 10.0):
+    async def start(self, tick_rate: float = 10.0, rooms_ref: dict | None = None):
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._loop(tick_rate))
+        self._task = asyncio.create_task(self._loop(tick_rate, rooms_ref or {}))
 
     async def stop(self):
         self._running = False
         if self._task:
             self._task.cancel()
 
-    async def _loop(self, tick_rate: float):
+    async def _loop(self, tick_rate: float, rooms_ref: dict):
         dt = 1.0 / tick_rate
         while self._running:
             await asyncio.sleep(dt)
-            # In a production system you'd read actual player positions from
-            # the multiplayer rooms here.  For now agents tick against an
-            # empty player set so they patrol / idle.
-            from .multiplayer import rooms
             player_data = {
                 pid: conn["data"]
-                for pid, conn in rooms.get(self.room_id, {}).items()
+                for pid, conn in rooms_ref.get(self.room_id, {}).items()
             }
             for agent in list(self.agents.values()):
                 agent.tick(dt, player_data)
@@ -210,13 +206,17 @@ class AIManager:
 _managers: dict[str, AIManager] = {}
 
 
-def get_manager(room_id: str) -> AIManager:
+def get_manager(room_id: str, rooms_ref: dict | None = None) -> AIManager:
     if room_id not in _managers:
         mgr = AIManager(room_id)
         _managers[room_id] = mgr
-        asyncio.create_task(mgr.start())
+        asyncio.create_task(mgr.start(rooms_ref=rooms_ref or {}))
     return _managers[room_id]
 
+
+def get_manager_with_rooms(room_id: str, rooms_ref: dict) -> AIManager:
+    """Convenience wrapper that always passes the rooms reference."""
+    return get_manager(room_id, rooms_ref)
 
 # ---------------------------------------------------------------------------
 # REST endpoints
@@ -228,7 +228,8 @@ async def spawn_agent(room_id: str, body: dict):
     Spawn an AI agent in the given room.
     Body: { agent_id, type, position: {x, y, z} }
     """
-    mgr = get_manager(room_id)
+    from ..routers.multiplayer import rooms as multiplayer_rooms
+    mgr = get_manager(room_id, multiplayer_rooms)
     agent_id = body.get("agent_id", f"ai_{len(mgr.agents) + 1}")
     agent_type = body.get("type", "zombie")
     position = body.get("position", {"x": 0, "y": 0, "z": 0})
@@ -239,12 +240,14 @@ async def spawn_agent(room_id: str, body: dict):
 @router.get("/{room_id}/ai/state")
 async def get_ai_state(room_id: str):
     """Return current state of all agents in a room."""
-    mgr = get_manager(room_id)
+    from ..routers.multiplayer import rooms as multiplayer_rooms
+    mgr = get_manager(room_id, multiplayer_rooms)
     return mgr.get_state()
 
 
 @router.post("/{room_id}/ai/{agent_id}/damage")
 async def damage_agent(room_id: str, agent_id: str, body: dict):
     """Apply damage to an agent. Body: { amount }"""
-    mgr = get_manager(room_id)
+    from ..routers.multiplayer import rooms as multiplayer_rooms
+    mgr = get_manager(room_id, multiplayer_rooms)
     return mgr.damage_agent(agent_id, int(body.get("amount", 0)))

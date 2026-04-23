@@ -3,7 +3,7 @@
 import json
 import os
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -150,7 +150,7 @@ async def get_stats(
         "projects": project_count,
         "assets": asset_count,
         "total_asset_bytes": total_asset_size,
-        "server_time": datetime.utcnow().isoformat(),
+        "server_time": datetime.now(timezone.utc).isoformat(),
         "platform": platform.system(),
         "python_version": platform.python_version(),
     }

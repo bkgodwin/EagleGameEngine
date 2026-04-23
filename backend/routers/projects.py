@@ -1,7 +1,7 @@
 """Project routes: CRUD + JSON export."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
@@ -63,7 +63,7 @@ async def update_project(
         project.name = body.name
     if body.data is not None:
         project.data = json.dumps(body.data)
-    project.updated_at = datetime.utcnow()
+    project.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(project)
     return project
@@ -91,7 +91,7 @@ async def export_project(
         "id": project.id,
         "name": project.name,
         "data": json.loads(project.data),
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
     }
     content = json.dumps(export_data, indent=2)
     return Response(

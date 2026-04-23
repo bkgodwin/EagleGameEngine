@@ -1,7 +1,7 @@
 """ORM models and Pydantic schemas for Eagle Game Engine."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
@@ -24,7 +24,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
     assets = relationship("Asset", back_populates="owner", cascade="all, delete-orphan")
@@ -37,8 +37,8 @@ class Project(Base):
     name = Column(String, nullable=False)
     data = Column(Text, default="{}", nullable=False)  # JSON blob
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     owner = relationship("User", back_populates="projects")
 
@@ -52,7 +52,7 @@ class Asset(Base):
     content_type = Column(String, nullable=False)
     size = Column(Integer, default=0, nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     owner = relationship("User", back_populates="assets")
 
