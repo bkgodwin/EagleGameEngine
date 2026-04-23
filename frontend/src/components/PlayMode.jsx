@@ -104,6 +104,16 @@ export default function PlayMode({ navigate }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // ---------------------------------------------------------------------------
+    // Game constants
+    // ---------------------------------------------------------------------------
+    const FLOOR_Z_OFFSET = -0.005;       // prevent z-fighting with terrain objects
+    const BOT_CENTER_Y_OFFSET = 0.9;     // capsule body center above group origin
+    const AI_HIT_RADIUS = 1.2;           // projectile→AI hit distance
+    const OBJECT_HIT_RADIUS_BASE = 0.6;  // minimum projectile→physics-object hit radius
+    const PROJECTILE_IMPULSE_BASE = 8;   // base impulse magnitude for projectile hits
+    const DEATH_ANIMATION_DURATION = 1.5; // seconds for bot death animation
+
     // Audio context for sounds
     const audioCtx = createAudioContext();
 
@@ -147,7 +157,7 @@ export default function PlayMode({ navigate }) {
     const floorMat = new THREE.MeshStandardMaterial({ map: floorTex });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.005; // slight offset to prevent z-fighting with terrain objects
+    floor.position.y = FLOOR_Z_OFFSET; // slight offset to prevent z-fighting with terrain objects
     floor.receiveShadow = true;
     scene.add(floor);
 
@@ -458,10 +468,10 @@ export default function PlayMode({ navigate }) {
         let hit = false;
         aiMeshes.forEach((aiMesh, agentId) => {
           if (p.hitIds.has(agentId)) return;
-          // Check against the body center (capsule body is at y+0.9 from group)
-          const botCenter = aiMesh.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+          // Check against the body center (capsule body is at BOT_CENTER_Y_OFFSET from group)
+          const botCenter = aiMesh.position.clone().add(new THREE.Vector3(0, BOT_CENTER_Y_OFFSET, 0));
           const dist = p.mesh.position.distanceTo(botCenter);
-          if (dist < 1.2) {
+          if (dist < AI_HIT_RADIUS) {
             p.hitIds.add(agentId);
             hit = true;
             setHitMarker(true);
@@ -478,11 +488,11 @@ export default function PlayMode({ navigate }) {
         scenePhysicsBodies.forEach(({ obj, mesh }) => {
           if (p.hitIds.has(obj.id)) return;
           const dist = p.mesh.position.distanceTo(mesh.position);
-          const hitRadius = Math.max(0.6, (obj.scale?.x || 1) * 0.6);
+          const hitRadius = Math.max(OBJECT_HIT_RADIUS_BASE, (obj.scale?.x || 1) * OBJECT_HIT_RADIUS_BASE);
           if (dist < hitRadius) {
             p.hitIds.add(obj.id);
             hit = true;
-            const impulseMag = 8 / Math.max(0.1, obj.mass || 1);
+            const impulseMag = PROJECTILE_IMPULSE_BASE / Math.max(0.1, obj.mass || 1);
             const iv = p.velocity.clone().normalize().multiplyScalar(impulseMag);
             physics.applyImpulse(obj.id, iv.x, iv.y, iv.z);
           }
@@ -663,11 +673,11 @@ export default function PlayMode({ navigate }) {
       dyingBots.forEach((dying, agentId) => {
         dying.elapsed += dt;
         dying.mesh.position.y -= dt * 1.5; // sink through floor
-        const opacity = Math.max(0, 1 - dying.elapsed / 1.5);
+        const opacity = Math.max(0, 1 - dying.elapsed / DEATH_ANIMATION_DURATION);
         dying.mesh.traverse(child => {
           if (child.isMesh) child.material.opacity = opacity;
         });
-        if (dying.elapsed >= 1.5) {
+        if (dying.elapsed >= DEATH_ANIMATION_DURATION) {
           scene.remove(dying.mesh);
           dyingBots.delete(agentId);
         }
