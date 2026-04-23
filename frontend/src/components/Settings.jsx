@@ -186,6 +186,20 @@ export default function Settings({ onClose, viewportRef }) {
                 <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>HP</span>
               </>
             )}
+            {field('AI Attack Damage',
+              <>
+                <input type="number" value={localProject.aiAttackDamage ?? 10} step="5" min="1" max="200"
+                  onChange={e => setLocalProject(l => ({ ...l, aiAttackDamage: parseInt(e.target.value) || 10 }))} style={{ flex: 1 }} />
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>HP</span>
+              </>
+            )}
+            {field('AI Health',
+              <>
+                <input type="number" value={localProject.aiHealth ?? 100} step="10" min="1" max="1000"
+                  onChange={e => setLocalProject(l => ({ ...l, aiHealth: parseInt(e.target.value) || 100 }))} style={{ flex: 1 }} />
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>HP</span>
+              </>
+            )}
             {field('Max Players',
               <select value={localProject.maxPlayers}
                 onChange={e => setLocalProject(l => ({ ...l, maxPlayers: parseInt(e.target.value) }))} style={{ flex: 1 }}>

@@ -4,7 +4,7 @@ import { useStore } from '../store/index.js';
 import { saveProject as apiSaveProject } from '../api/index.js';
 
 // --------------------------------------------------------------------------
-// Canvas-based grid texture: 1 cell = 1 world unit, 2 cells = player height
+// Canvas-based grid texture: editor floor only
 // --------------------------------------------------------------------------
 function makeGridTexture() {
   const size = 128;
@@ -21,6 +21,49 @@ function makeGridTexture() {
   ctx.strokeRect(0, 0, size, size);
   ctx.strokeRect(0, 0, size / 2, size / 2);
   ctx.strokeRect(size / 2, size / 2, size / 2, size / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+// --------------------------------------------------------------------------
+// Procedural rock/grass texture for terrain (no grid lines)
+// --------------------------------------------------------------------------
+function makeTerrainTexture() {
+  const size = 512;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const ctx = cv.getContext('2d');
+  // Base earthy green
+  ctx.fillStyle = '#4a7c59';
+  ctx.fillRect(0, 0, size, size);
+  // Noise-based rock/grass variation
+  const rng = (n) => ((Math.sin(n * 127.1) * 43758.5453) % 1 + 1) % 1;
+  for (let i = 0; i < 4000; i++) {
+    const x = rng(i) * size;
+    const y = rng(i + 1000) * size;
+    const r = 1 + rng(i + 2000) * 5;
+    const isRock = rng(i + 3000) > 0.55;
+    if (isRock) {
+      const v = Math.floor(90 + rng(i + 4000) * 40);
+      ctx.fillStyle = `rgba(${v},${v - 10},${v - 20},0.45)`;
+    } else {
+      const g = Math.floor(80 + rng(i + 5000) * 50);
+      ctx.fillStyle = `rgba(40,${g},35,0.35)`;
+    }
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * (0.6 + rng(i + 6000) * 0.8), rng(i + 7000) * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Subtle fine grain overlay
+  for (let i = 4000; i < 7000; i++) {
+    const x = rng(i) * size;
+    const y = rng(i + 100) * size;
+    const alpha = 0.05 + rng(i + 200) * 0.1;
+    ctx.fillStyle = `rgba(200,190,160,${alpha})`;
+    ctx.fillRect(x, y, 1, 1);
+  }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
@@ -106,6 +149,17 @@ const Viewport = forwardRef((props, ref) => {
     // ---- Selection box ----
     let selectionBox = null;
 
+    // ---- Multi-select ----
+    const multiSelectedIds = new Set();
+
+    // ---- Active gizmo highlight tracking ----
+    let activeGizmoMeshes = [];
+
+    // ---- Terrain sculpt drag state ----
+    let sculptDragging = false;
+    let sculptObjectId = null;
+    let isLeftMouseDown = false;
+
     // ---- Orbit camera state ----
     const spherical = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 15 };
     const target = new THREE.Vector3(0, 0, 0);
@@ -157,13 +211,27 @@ const Viewport = forwardRef((props, ref) => {
         const ndx = (totalDx / canvas.clientWidth) * 2;
         const ndy = -(totalDy / canvas.clientHeight) * 2;
         const dot = ndx * (sdx / sLen) + ndy * (sdy / sLen);
-        let delta = dot * spherical.radius * 0.5;
+        let delta = dot * spherical.radius * 2.0;
         if (snap.enabled) delta = snapValue(delta, snap.translate);
         const newPos = objInitPos.clone().addScaledVector(worldDir, delta);
         entry.mesh.position.copy(newPos);
         updateSceneObject(sel, { position: { x: newPos.x, y: newPos.y, z: newPos.z } });
+        // Move all multi-selected objects by the same delta
+        const deltaVec = newPos.clone().sub(objInitPos);
+        multiSelectedIds.forEach(mid => {
+          if (mid === sel) return;
+          const me = objectMap.get(mid);
+          if (me && draggingGizmo.multiInitPositions) {
+            const initP = draggingGizmo.multiInitPositions.get(mid);
+            if (initP) {
+              const mp = initP.clone().add(deltaVec);
+              me.mesh.position.copy(mp);
+              updateSceneObject(mid, { position: { x: mp.x, y: mp.y, z: mp.z } });
+            }
+          }
+        });
       } else if (type === 'rotate') {
-        const sensitivity = 0.01;
+        const sensitivity = 0.015;
         let delta = axis === 'y' ? totalDx * sensitivity : axis === 'x' ? totalDy * sensitivity : totalDx * sensitivity;
         if (snap.enabled) {
           const stepRad = (snap.rotate * Math.PI) / 180;
@@ -184,7 +252,7 @@ const Viewport = forwardRef((props, ref) => {
         const ndx = (totalDx / canvas.clientWidth) * 2;
         const ndy = -(totalDy / canvas.clientHeight) * 2;
         const dot = ndx * (sdx / sLen) + ndy * (sdy / sLen);
-        let delta = dot * spherical.radius * 0.15;
+        let delta = dot * spherical.radius * 0.5;
         if (snap.enabled) delta = snapValue(delta, snap.scale);
         const ns = objInitScale.clone();
         if (axis === 'x') ns.x = Math.max(0.01, objInitScale.x + delta);
@@ -200,6 +268,7 @@ const Viewport = forwardRef((props, ref) => {
       lastMouse = { x: e.clientX, y: e.clientY };
 
       if (e.button === 0) {
+        isLeftMouseDown = true;
         // Check gizmo hit first
         const rect = canvas.getBoundingClientRect();
         const mouse = new THREE.Vector2(
@@ -216,6 +285,12 @@ const Viewport = forwardRef((props, ref) => {
           const sel = storeRef.current.selectedObjectId;
           const entry = objectMap.get(sel);
           if (entry) {
+            // Collect initial positions for multi-selected objects
+            const multiInitPositions = new Map();
+            multiSelectedIds.forEach(mid => {
+              const me = objectMap.get(mid);
+              if (me) multiInitPositions.set(mid, me.mesh.position.clone());
+            });
             draggingGizmo = {
               axis: gd.gizmoAxis,
               type: gd.gizmoType,
@@ -224,10 +299,42 @@ const Viewport = forwardRef((props, ref) => {
               objInitScale: entry.mesh.scale.clone(),
               startX: e.clientX,
               startY: e.clientY,
+              multiInitPositions,
             };
+            // Highlight active axis meshes
+            activeGizmoMeshes = [];
+            gizmoGroup.traverse(child => {
+              if (child.isMesh && child.userData.gizmoAxis === gd.gizmoAxis && child.material?.visible !== false) {
+                activeGizmoMeshes.push({ mesh: child, origColor: child.material.color.getHex() });
+                child.material = child.material.clone();
+                child.material.color.setHex(0xffff00);
+              }
+            });
           }
           e.preventDefault();
           return;
+        }
+        // Check terrain sculpt (start drag sculpt)
+        const { editorMode: mode, selectedObjectId: sel, sceneObjects: objs } = storeRef.current;
+        if (mode === 'select' && sel) {
+          const obj2 = objs.find(o => o.id === sel);
+          if (obj2?.type === 'terrain') {
+            const rect2 = canvas.getBoundingClientRect();
+            const m2 = new THREE.Vector2(
+              ((e.clientX - rect2.left) / rect2.width) * 2 - 1,
+              -((e.clientY - rect2.top) / rect2.height) * 2 + 1
+            );
+            const rc2 = new THREE.Raycaster();
+            rc2.setFromCamera(m2, camera);
+            const terrainEntry = objectMap.get(sel);
+            if (terrainEntry) {
+              const hits2 = rc2.intersectObject(terrainEntry.mesh, false);
+              if (hits2.length > 0) {
+                sculptDragging = true;
+                sculptObjectId = sel;
+              }
+            }
+          }
         }
       }
 
@@ -245,6 +352,32 @@ const Viewport = forwardRef((props, ref) => {
         return;
       }
 
+      // Terrain sculpt on drag
+      if (sculptDragging && sculptObjectId && isLeftMouseDown) {
+        const { sceneObjects: objs } = storeRef.current;
+        const obj2 = objs.find(o => o.id === sculptObjectId);
+        if (obj2) {
+          const rect = canvas.getBoundingClientRect();
+          const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          const my = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+          const rc = new THREE.Raycaster();
+          rc.setFromCamera(new THREE.Vector2(mx, my), camera);
+          const terrainEntry = objectMap.get(sculptObjectId);
+          if (terrainEntry) {
+            const hits = rc.intersectObject(terrainEntry.mesh, false);
+            if (hits.length > 0) {
+              terrainEntry.terrainManager.sculpt(
+                hits[0].point,
+                obj2.terrainTool || 'raise',
+                obj2.brushSize || 8,
+                obj2.brushStrength || 0.3
+              );
+              updateSceneObject(sculptObjectId, { heightData: Array.from(terrainEntry.terrainManager.heightData) });
+            }
+          }
+        }
+      }
+
       if (isOrbiting) {
         spherical.theta -= dx * 0.005;
         spherical.phi -= dy * 0.005;
@@ -254,7 +387,6 @@ const Viewport = forwardRef((props, ref) => {
       if (isPanning) {
         const right = new THREE.Vector3();
         const up = new THREE.Vector3();
-        camera.getWorldDirection(new THREE.Vector3());
         right.crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
         up.copy(camera.up);
         const panScale = spherical.radius * 0.001;
@@ -263,10 +395,20 @@ const Viewport = forwardRef((props, ref) => {
         updateCamera();
       }
     };
-    const onMouseUp = () => {
+    const onMouseUp = (e) => {
+      if (e.button === 0) {
+        isLeftMouseDown = false;
+        sculptDragging = false;
+        sculptObjectId = null;
+        // Restore axis highlight
+        activeGizmoMeshes.forEach(({ mesh, origColor }) => {
+          if (mesh.material) mesh.material.color.setHex(origColor);
+        });
+        activeGizmoMeshes = [];
+      }
       draggingGizmo = null;
-      isOrbiting = false;
-      isPanning = false;
+      if (e.button === 2) isOrbiting = false;
+      if (e.button === 1) isPanning = false;
     };
     const onWheel = (e) => {
       spherical.radius *= 1 + e.deltaY * 0.001;
@@ -275,11 +417,10 @@ const Viewport = forwardRef((props, ref) => {
     };
     const onContextMenu = (e) => e.preventDefault();
 
-    // ---- Click selection ----
+    // ---- Click selection (with ctrl+click multi-select) ----
     const onClick = (e) => {
       if (e.button !== 0) return;
-      // Don't fire selection right after a gizmo drag
-      if (e.detail === 1 && e.movementX === 0 && e.movementY === 0) { /* proceed */ }
+      // If we just dragged terrain, don't re-select
       const rect = canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -297,17 +438,26 @@ const Viewport = forwardRef((props, ref) => {
         while (hit && !hit.userData.eagleId) hit = hit.parent;
         if (hit?.userData?.eagleId) {
           const id = hit.userData.eagleId;
+          if (e.ctrlKey || e.metaKey) {
+            // Ctrl+click: toggle multi-select
+            if (multiSelectedIds.has(id)) {
+              multiSelectedIds.delete(id);
+            } else {
+              multiSelectedIds.add(id);
+            }
+          } else {
+            multiSelectedIds.clear();
+          }
           setSelectedObjectId(id);
           selectMesh(id);
-          // terrain sculpting
+          // terrain sculpting on click (single click)
           const { editorMode: mode, sceneObjects: objs } = storeRef.current;
           const obj2 = objs.find(o => o.id === id);
           if (obj2?.type === 'terrain' && mode === 'select') {
             const worldPt = hits[0].point;
             const entry = objectMap.get(id);
             if (entry?.terrainManager) {
-              entry.terrainManager.sculpt(worldPt, obj2.terrainTool || 'raise', obj2.brushSize || 5, obj2.brushStrength || 0.1);
-              // Sync height data back to store so play mode and save see it
+              entry.terrainManager.sculpt(worldPt, obj2.terrainTool || 'raise', obj2.brushSize || 8, obj2.brushStrength || 0.3);
               updateSceneObject(id, { heightData: Array.from(entry.terrainManager.heightData) });
             }
           }
@@ -329,72 +479,104 @@ const Viewport = forwardRef((props, ref) => {
     const resizeObserver = new ResizeObserver(() => setSize());
     resizeObserver.observe(canvas.parentElement || canvas);
 
-    // ---- Gizmo helpers ----
-    function buildTranslateGizmo(pos) {
-      const arrowLen = 1.2;
+    // ---- Gizmo helpers (built at local origin; gizmoGroup.position = object pos) ----
+    function buildTranslateGizmo() {
+      const arrowLen = 1.5;
       const axes = [
         { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x' },
         { dir: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y' },
         { dir: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z' },
       ];
       axes.forEach(({ dir, color, axis }) => {
-        const points = [pos.clone(), pos.clone().addScaledVector(dir, arrowLen)];
+        const points = [new THREE.Vector3(0, 0, 0), dir.clone().multiplyScalar(arrowLen)];
         const geo = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, linewidth: 2 }));
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, linewidth: 3 }));
         line.userData.isGizmo = true;
         gizmoGroup.add(line);
-        const coneGeo = new THREE.ConeGeometry(0.1, 0.3, 8);
-        const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color }));
-        cone.position.copy(pos).addScaledVector(dir, arrowLen + 0.15);
+        // Visible cone tip
+        const coneGeo = new THREE.ConeGeometry(0.14, 0.4, 8);
+        const mat = new THREE.MeshBasicMaterial({ color });
+        const cone = new THREE.Mesh(coneGeo, mat);
+        cone.position.copy(dir).multiplyScalar(arrowLen + 0.2);
         cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         cone.userData.isGizmo = true;
         cone.userData.gizmoAxis = axis;
         cone.userData.gizmoType = 'translate';
+        cone.userData.baseColor = color;
         gizmoGroup.add(cone);
+        // Invisible larger hit cylinder for easier selection
+        const hitGeo = new THREE.CylinderGeometry(0.3, 0.3, arrowLen, 6);
+        const hitBox = new THREE.Mesh(hitGeo, new THREE.MeshBasicMaterial({ visible: false }));
+        hitBox.position.copy(dir).multiplyScalar(arrowLen * 0.5);
+        hitBox.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        hitBox.userData.isGizmo = true;
+        hitBox.userData.gizmoAxis = axis;
+        hitBox.userData.gizmoType = 'translate';
+        hitBox.userData.baseColor = color;
+        gizmoGroup.add(hitBox);
       });
     }
 
-    function buildRotateGizmo(pos) {
-      const radius = 1.1;
+    function buildRotateGizmo() {
+      const radius = 1.4;
       const axes = [
         { normal: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x' },
         { normal: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y' },
         { normal: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z' },
       ];
       axes.forEach(({ normal, color, axis }) => {
-        const torusGeo = new THREE.TorusGeometry(radius, 0.04, 8, 36);
-        const torus = new THREE.Mesh(torusGeo, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
-        torus.position.copy(pos);
+        const torusGeo = new THREE.TorusGeometry(radius, 0.08, 8, 48);
+        const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+        const torus = new THREE.Mesh(torusGeo, mat);
         // Orient the torus ring to face the correct axis
         if (normal.x === 1) torus.rotation.y = Math.PI / 2;
         else if (normal.z === 1) torus.rotation.x = Math.PI / 2;
         torus.userData.isGizmo = true;
         torus.userData.gizmoAxis = axis;
         torus.userData.gizmoType = 'rotate';
+        torus.userData.baseColor = color;
         gizmoGroup.add(torus);
       });
     }
 
-    function buildScaleGizmo(pos) {
-      const len = 1.2;
+    function buildScaleGizmo(box3) {
+      // Position handles just outside the bounding box
+      const size = box3 ? box3.getSize(new THREE.Vector3()) : new THREE.Vector3(1, 1, 1);
+      const offsets = {
+        x: size.x / 2 + 0.15,
+        y: size.y / 2 + 0.15,
+        z: size.z / 2 + 0.15,
+      };
       const axes = [
-        { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x' },
-        { dir: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y' },
-        { dir: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z' },
+        { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x', offset: offsets.x },
+        { dir: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y', offset: offsets.y },
+        { dir: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z', offset: offsets.z },
       ];
-      axes.forEach(({ dir, color, axis }) => {
-        const points = [pos.clone(), pos.clone().addScaledVector(dir, len)];
+      axes.forEach(({ dir, color, axis, offset }) => {
+        const handlePos = dir.clone().multiplyScalar(offset + 0.5);
+        const points = [new THREE.Vector3(0, 0, 0), handlePos.clone()];
         const geo = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, linewidth: 2 }));
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, linewidth: 3 }));
         line.userData.isGizmo = true;
         gizmoGroup.add(line);
-        const boxGeo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
-        const box = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color }));
-        box.position.copy(pos).addScaledVector(dir, len + 0.09);
+        const boxGeo = new THREE.BoxGeometry(0.28, 0.28, 0.28);
+        const mat = new THREE.MeshBasicMaterial({ color });
+        const box = new THREE.Mesh(boxGeo, mat);
+        box.position.copy(handlePos);
         box.userData.isGizmo = true;
         box.userData.gizmoAxis = axis;
         box.userData.gizmoType = 'scale';
+        box.userData.baseColor = color;
         gizmoGroup.add(box);
+        // Larger invisible hit box
+        const hitGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+        const hitBox = new THREE.Mesh(hitGeo, new THREE.MeshBasicMaterial({ visible: false }));
+        hitBox.position.copy(handlePos);
+        hitBox.userData.isGizmo = true;
+        hitBox.userData.gizmoAxis = axis;
+        hitBox.userData.gizmoType = 'scale';
+        hitBox.userData.baseColor = color;
+        gizmoGroup.add(hitBox);
       });
     }
 
@@ -412,18 +594,15 @@ const Viewport = forwardRef((props, ref) => {
       helper.userData.isHelper = true;
       scene.add(helper);
       selectionBox = helper;
-      // Build the correct gizmo based on current editor mode
-      const pos = entry.mesh.position.clone();
+      // Position gizmo group at object center, build gizmos at local origin
+      gizmoGroup.position.copy(entry.mesh.position);
       const mode = storeRef.current.editorMode;
-      if (mode === 'translate') buildTranslateGizmo(pos);
-      else if (mode === 'rotate') buildRotateGizmo(pos);
-      else if (mode === 'scale') buildScaleGizmo(pos);
+      if (mode === 'translate') buildTranslateGizmo();
+      else if (mode === 'rotate') buildRotateGizmo();
+      else if (mode === 'scale') buildScaleGizmo(box3);
     }
 
     // ---- Object creation ----
-    const gridTex2 = makeGridTexture();
-    gridTex2.repeat.set(1, 1);
-
     function createObjectMesh(type, id, name, options = {}) {
       const position = options.position || { x: 0, y: 0, z: 0 };
       const rotation = options.rotation || { x: 0, y: 0, z: 0 };
@@ -473,8 +652,8 @@ const Viewport = forwardRef((props, ref) => {
         case 'terrain': {
           const geo = new THREE.PlaneGeometry(100, 100, 64, 64);
           geo.rotateX(-Math.PI / 2);
-          const terrainTex = makeGridTexture();
-          terrainTex.repeat.set(50, 50);
+          const terrainTex = makeTerrainTexture();
+          terrainTex.repeat.set(20, 20);
           const terrainMat = new THREE.MeshStandardMaterial({ map: terrainTex, side: THREE.DoubleSide });
           mesh = new THREE.Mesh(geo, terrainMat);
           break;
@@ -523,6 +702,23 @@ const Viewport = forwardRef((props, ref) => {
       mesh.userData.eagleType = type;
       mesh.userData.eagleName = name;
       mesh.traverse(child => { if (child !== mesh) child.userData.eagleId = id; });
+
+      // Apply texture if provided in options
+      if (options.textureUrl) {
+        const loader = new THREE.TextureLoader();
+        loader.load(options.textureUrl, (tex) => {
+          tex.wrapS = THREE.RepeatWrapping;
+          tex.wrapT = THREE.RepeatWrapping;
+          const r = options.textureRepeat || 1;
+          tex.repeat.set(r, r);
+          mesh.traverse(child => {
+            if (child.isMesh && child.material && !child.userData.isGizmo) {
+              child.material.map = tex;
+              child.material.needsUpdate = true;
+            }
+          });
+        });
+      }
 
       scene.add(mesh);
 
@@ -637,18 +833,15 @@ const Viewport = forwardRef((props, ref) => {
         if (sel) selectMesh(sel);
         else clearSelection();
       }
-      // Update selection box position (in case mesh moved via gizmo)
-      if (selectionBox && sel) {
+      // Every frame: keep gizmoGroup and selectionBox tracking the object
+      if (sel) {
         const entry = objectMap.get(sel);
         if (entry) {
+          // Track selection box to object bounds
           const box3 = new THREE.Box3().setFromObject(entry.mesh);
-          if (selectionBox.box) selectionBox.box.copy(box3);
-          // Keep gizmo group anchored to object
-          gizmoGroup.traverse(child => {
-            if (child.userData.gizmoType) {
-              // gizmos will be rebuilt on next selection change
-            }
-          });
+          if (selectionBox?.box) selectionBox.box.copy(box3);
+          // Track gizmo group to object position
+          gizmoGroup.position.copy(entry.mesh.position);
         }
       }
       renderer.render(scene, camera);
@@ -669,7 +862,6 @@ const Viewport = forwardRef((props, ref) => {
       objectMap.forEach(entry => { scene.remove(entry.mesh); disposeMesh(entry.mesh); });
       objectMap.clear();
       gridTex.dispose();
-      gridTex2.dispose();
       renderer.dispose();
     };
   }, []); // run once on mount
@@ -748,6 +940,30 @@ const Viewport = forwardRef((props, ref) => {
         }
       });
     },
+    updateObjectTexture(id, textureUrl, repeat) {
+      const { objectMap } = stateRef.current;
+      if (!objectMap) return;
+      const entry = objectMap.get(id);
+      if (!entry) return;
+      entry.mesh.traverse(child => {
+        if (child.isMesh && child.material) {
+          if (textureUrl) {
+            const loader = new THREE.TextureLoader();
+            loader.load(textureUrl, (tex) => {
+              tex.wrapS = THREE.RepeatWrapping;
+              tex.wrapT = THREE.RepeatWrapping;
+              const r = repeat || 1;
+              tex.repeat.set(r, r);
+              child.material.map = tex;
+              child.material.needsUpdate = true;
+            });
+          } else {
+            child.material.map = null;
+            child.material.needsUpdate = true;
+          }
+        }
+      });
+    },
     updateObjectName(id, name) {
       const { objectMap } = stateRef.current;
       if (!objectMap) return;
@@ -792,7 +1008,8 @@ const Viewport = forwardRef((props, ref) => {
         const storeObj = storeRef.current.sceneObjects.find(o => o.id === id);
         if (storeObj) {
           ['tags', 'lightProps', 'terrainTool', 'brushSize', 'brushStrength',
-           'spawnIndex', 'deathMessage', 'aiType', 'patrolRadius', 'detectRadius', 'attackDamage'].forEach(k => {
+           'spawnIndex', 'deathMessage', 'aiType', 'aiHealth', 'patrolRadius', 'detectRadius',
+           'attackDamage', 'simulatePhysics', 'enableCollision', 'textureUrl', 'textureRepeat'].forEach(k => {
             if (storeObj[k] !== undefined) obj[k] = storeObj[k];
           });
         }

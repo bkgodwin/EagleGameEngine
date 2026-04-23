@@ -28,7 +28,7 @@ const ADD_TYPES = [
 ];
 
 export default function SceneHierarchy({ viewportRef }) {
-  const { sceneObjects, selectedObjectId, setSelectedObjectId, updateSceneObject } = useStore();
+  const { sceneObjects, selectedObjectId, selectedObjectIds, setSelectedObjectId, setSelectedObjectIds, updateSceneObject } = useStore();
   const [showDropdown, setShowDropdown] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
@@ -76,6 +76,21 @@ export default function SceneHierarchy({ viewportRef }) {
     setRenamingId(null);
   }
 
+  function handleItemClick(e, obj) {
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl+click: toggle in multi-select
+      const newIds = selectedObjectIds.includes(obj.id)
+        ? selectedObjectIds.filter(i => i !== obj.id)
+        : [...selectedObjectIds, obj.id];
+      setSelectedObjectIds(newIds);
+      setSelectedObjectId(obj.id);
+    } else {
+      setSelectedObjectIds([]);
+      setSelectedObjectId(obj.id);
+    }
+    if (viewportRef?.current?.selectObject) viewportRef.current.selectObject(obj.id);
+  }
+
   const overLimit = sceneObjects.length >= 90;
 
   return (
@@ -115,6 +130,12 @@ export default function SceneHierarchy({ viewportRef }) {
         </div>
       )}
 
+      {selectedObjectIds.length > 1 && (
+        <div style={{ padding: '4px 12px', fontSize: '11px', color: 'var(--color-accent)', background: 'rgba(100,180,255,0.1)', marginBottom: '4px' }}>
+          {selectedObjectIds.length} objects selected (Ctrl+click to add/remove)
+        </div>
+      )}
+
       {/* Object list */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {sceneObjects.length === 0 && (
@@ -122,45 +143,47 @@ export default function SceneHierarchy({ viewportRef }) {
             No objects in scene.<br />Add one above.
           </div>
         )}
-        {sceneObjects.map(obj => (
-          <div
-            key={obj.id}
-            className={`hierarchy-item${selectedObjectId === obj.id ? ' selected' : ''}`}
-            onClick={() => {
-              setSelectedObjectId(obj.id);
-              if (viewportRef?.current?.selectObject) viewportRef.current.selectObject(obj.id);
-            }}
-            onDoubleClick={(e) => handleStartRename(e, obj)}
-          >
-            <span className="item-icon">{TYPE_ICONS[obj.type] || '📦'}</span>
-
-            {renamingId === obj.id ? (
-              <input
-                autoFocus
-                className="item-name"
-                value={renameValue}
-                onChange={e => setRenameValue(e.target.value)}
-                onBlur={() => handleRenameSubmit(obj.id)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleRenameSubmit(obj.id);
-                  if (e.key === 'Escape') setRenamingId(null);
-                }}
-                style={{ flex: 1, background: '#0f3460', border: '1px solid var(--color-secondary)', borderRadius: '3px', padding: '1px 6px', fontSize: '12px', color: 'var(--color-accent)', outline: 'none' }}
-                onClick={e => e.stopPropagation()}
-              />
-            ) : (
-              <span className="item-name" title={obj.name}>{obj.name}</span>
-            )}
-
-            <button
-              className="item-delete"
-              onClick={(e) => handleDelete(e, obj.id)}
-              title="Delete object"
+        {sceneObjects.map(obj => {
+          const isSelected = selectedObjectId === obj.id;
+          const isMultiSelected = selectedObjectIds.includes(obj.id);
+          return (
+            <div
+              key={obj.id}
+              className={`hierarchy-item${isSelected ? ' selected' : ''}${isMultiSelected && !isSelected ? ' multi-selected' : ''}`}
+              style={isMultiSelected && !isSelected ? { background: 'rgba(100,180,255,0.08)', borderLeft: '2px solid #42a5f5' } : {}}
+              onClick={(e) => handleItemClick(e, obj)}
+              onDoubleClick={(e) => handleStartRename(e, obj)}
             >
-              ×
-            </button>
-          </div>
-        ))}
+              <span className="item-icon">{TYPE_ICONS[obj.type] || '📦'}</span>
+
+              {renamingId === obj.id ? (
+                <input
+                  autoFocus
+                  className="item-name"
+                  value={renameValue}
+                  onChange={e => setRenameValue(e.target.value)}
+                  onBlur={() => handleRenameSubmit(obj.id)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleRenameSubmit(obj.id);
+                    if (e.key === 'Escape') setRenamingId(null);
+                  }}
+                  style={{ flex: 1, background: '#0f3460', border: '1px solid var(--color-secondary)', borderRadius: '3px', padding: '1px 6px', fontSize: '12px', color: 'var(--color-accent)', outline: 'none' }}
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <span className="item-name" title={obj.name}>{obj.name}</span>
+              )}
+
+              <button
+                className="item-delete"
+                onClick={(e) => handleDelete(e, obj.id)}
+                title="Delete object"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -20,26 +20,72 @@ async function fetchAIAgents(roomId) {
   return [];
 }
 
-// Canvas-based grid texture (same as editor)
-function makeGridTexture() {
-  const size = 128;
+// Procedural rock/grass texture for terrain (no grid lines)
+function makeTerrainTexture() {
+  const size = 512;
   const cv = document.createElement('canvas');
   cv.width = size; cv.height = size;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#4a6a4a';
+  ctx.fillStyle = '#4a7c59';
   ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = '#5a7a5a';
-  ctx.fillRect(0, 0, size / 2, size / 2);
-  ctx.fillRect(size / 2, size / 2, size / 2, size / 2);
-  ctx.strokeStyle = '#3a5a3a';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(0, 0, size, size);
-  ctx.strokeRect(0, 0, size / 2, size / 2);
-  ctx.strokeRect(size / 2, size / 2, size / 2, size / 2);
+  const rng = (n) => ((Math.sin(n * 127.1) * 43758.5453) % 1 + 1) % 1;
+  for (let i = 0; i < 4000; i++) {
+    const x = rng(i) * size;
+    const y = rng(i + 1000) * size;
+    const r = 1 + rng(i + 2000) * 5;
+    const isRock = rng(i + 3000) > 0.55;
+    if (isRock) {
+      const v = Math.floor(90 + rng(i + 4000) * 40);
+      ctx.fillStyle = `rgba(${v},${v - 10},${v - 20},0.45)`;
+    } else {
+      const g = Math.floor(80 + rng(i + 5000) * 50);
+      ctx.fillStyle = `rgba(40,${g},35,0.35)`;
+    }
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * (0.6 + rng(i + 6000) * 0.8), rng(i + 7000) * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   return tex;
+}
+
+// Simple Web Audio sound utilities
+function createAudioContext() {
+  try { return new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { return null; }
+}
+function playShootSound(audioCtx) {
+  if (!audioCtx) return;
+  try {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.12);
+  } catch (_) {}
+}
+function playFootstepSound(audioCtx) {
+  if (!audioCtx) return;
+  try {
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.05, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const source = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    source.buffer = buf;
+    source.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+    source.start();
+  } catch (_) {}
 }
 
 export default function PlayMode({ navigate }) {
@@ -57,6 +103,9 @@ export default function PlayMode({ navigate }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Audio context for sounds
+    const audioCtx = createAudioContext();
 
     // Scene
     const scene = new THREE.Scene();
@@ -89,9 +138,9 @@ export default function PlayMode({ navigate }) {
     sun.castShadow = true;
     scene.add(sun);
 
-    // Grid floor – 1 cell = 1 unit, 2 cells = player height
-    const floorTex = makeGridTexture();
-    floorTex.repeat.set(200, 200);
+    // Terrain-textured floor
+    const floorTex = makeTerrainTexture();
+    floorTex.repeat.set(50, 50);
     const floorGeo = new THREE.PlaneGeometry(200, 200);
     const floorMat = new THREE.MeshStandardMaterial({ map: floorTex });
     const floor = new THREE.Mesh(floorGeo, floorMat);
@@ -103,6 +152,7 @@ export default function PlayMode({ navigate }) {
     const killVolumes = [];
     let spawnPos = new THREE.Vector3(0, 2, 0);
     const aiBotSpawns = [];
+    const scenePhysicsBodies = []; // { body, mesh } for dynamic objects
 
     sceneObjects.forEach(obj => {
       if (obj.type === 'spawnPoint') {
@@ -146,8 +196,8 @@ export default function PlayMode({ navigate }) {
             positions.needsUpdate = true;
             geo.computeVertexNormals();
           }
-          const terrainTex = makeGridTexture();
-          terrainTex.repeat.set(50, 50);
+          const terrainTex = makeTerrainTexture();
+          terrainTex.repeat.set(20, 20);
           mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: terrainTex }));
           break;
         }
@@ -164,12 +214,23 @@ export default function PlayMode({ navigate }) {
         mesh.receiveShadow = true;
         mesh.userData.eagleId = obj.id;
         scene.add(mesh);
+        // Physics simulation for cubes and spheres if enabled
+        if (obj.simulatePhysics && (obj.type === 'cube' || obj.type === 'sphere')) {
+          // Will be added after physics is initialised
+          scenePhysicsBodies.push({ obj, mesh });
+        }
       }
     });
 
     // Physics
     const physics = new PhysicsManager();
     physics.addGroundPlane();
+
+    // Add physics bodies for objects with simulatePhysics enabled
+    scenePhysicsBodies.forEach(({ obj, mesh }) => {
+      const shape = obj.type === 'sphere' ? 'sphere' : 'box';
+      physics.addBody(obj.id, mesh, { type: obj.enableCollision === false ? 'kinematic' : 'dynamic', mass: 1, shape });
+    });
 
     // Input
     const input = new InputManager();
@@ -285,6 +346,7 @@ export default function PlayMode({ navigate }) {
       );
       body.position.y = 0.9;
       group.add(body);
+      group.userData.agentId = agentId;
       scene.add(group);
       aiMeshes.set(agentId, group);
       return group;
@@ -307,6 +369,8 @@ export default function PlayMode({ navigate }) {
     });
 
     let aiPollTimer = null;
+    // AI target positions for smooth interpolation
+    const aiTargetPositions = new Map(); // agent_id → {x,y,z}
 
     async function pollAI() {
       const agents = await fetchAIAgents(roomId);
@@ -314,11 +378,12 @@ export default function PlayMode({ navigate }) {
         if (agent.state === 'dead') {
           const m = aiMeshes.get(agent.agent_id);
           if (m) { scene.remove(m); aiMeshes.delete(agent.agent_id); }
+          aiTargetPositions.delete(agent.agent_id);
           return;
         }
-        const m = getOrCreateAIMesh(agent.agent_id, agent.type);
+        getOrCreateAIMesh(agent.agent_id, agent.type);
         if (agent.position) {
-          m.position.set(agent.position.x || 0, agent.position.y || 0, agent.position.z || 0);
+          aiTargetPositions.set(agent.agent_id, agent.position);
         }
       });
     }
@@ -346,6 +411,73 @@ export default function PlayMode({ navigate }) {
     });
     resizeObs.observe(canvas.parentElement || canvas);
 
+    // ---------------------------------------------------------------------------
+    // Projectile system (ballistic arc)
+    // ---------------------------------------------------------------------------
+    const projectiles = []; // { mesh, velocity, lifetime }
+
+    function spawnProjectile(origin, direction) {
+      const geo = new THREE.SphereGeometry(0.07, 6, 6);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffee44 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(origin);
+      // Initial velocity: forward at speed 60 + slight upward arc
+      const vel = direction.clone().normalize().multiplyScalar(60);
+      vel.y += 3; // slight upward arc
+      scene.add(mesh);
+      projectiles.push({ mesh, velocity: vel, lifetime: 3.0, hitIds: new Set() });
+    }
+
+    function updateProjectiles(dt) {
+      const gravity = -30;
+      for (let i = projectiles.length - 1; i >= 0; i--) {
+        const p = projectiles[i];
+        p.velocity.y += gravity * dt;
+        p.mesh.position.addScaledVector(p.velocity, dt);
+        p.lifetime -= dt;
+
+        // Check if projectile hits AI
+        let hit = false;
+        aiMeshes.forEach((aiMesh, agentId) => {
+          if (p.hitIds.has(agentId)) return;
+          const dist = p.mesh.position.distanceTo(aiMesh.position);
+          if (dist < 1.0) {
+            p.hitIds.add(agentId);
+            hit = true;
+            setHitMarker(true);
+            setTimeout(() => setHitMarker(false), 150);
+            const token = getToken();
+            fetch(`/api/rooms/${roomId}/ai/${agentId}/damage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+              body: JSON.stringify({ amount: weaponDamage }),
+            }).catch(() => {});
+          }
+        });
+        // Check if projectile hits remote players
+        if (net.isConnected && pvpEnabled) {
+          remotePlayerMeshes.forEach((entry, pid) => {
+            if (p.hitIds.has(pid)) return;
+            const dist = p.mesh.position.distanceTo(entry.mesh.position);
+            if (dist < 1.0) {
+              p.hitIds.add(pid);
+              hit = true;
+              setHitMarker(true);
+              setTimeout(() => setHitMarker(false), 150);
+              net.sendDamage(pid, weaponDamage);
+            }
+          });
+        }
+
+        if (p.lifetime <= 0 || hit || p.mesh.position.y < -20) {
+          scene.remove(p.mesh);
+          p.mesh.geometry.dispose();
+          p.mesh.material.dispose();
+          projectiles.splice(i, 1);
+        }
+      }
+    }
+
     // Shooting
     let netUpdateAccum = 0;
     const weaponDamage = projectSettings?.weaponDamage ?? 25;
@@ -353,17 +485,26 @@ export default function PlayMode({ navigate }) {
 
     const onMouseDown = (e) => {
       if (e.button === 0 && document.pointerLockElement === canvas) {
-        // Muzzle flash
+        // Resume audio context on user gesture
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        // Muzzle flash + sound
         setShootFlash(true);
         setTimeout(() => setShootFlash(false), 80);
+        playShootSound(audioCtx);
 
+        // Spawn ballistic projectile
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        const origin = camera.position.clone().addScaledVector(dir, 0.5);
+        spawnProjectile(origin, dir);
+
+        // Also do instant raycast for visual feedback
         const result = player.shoot(scene, []);
         if (result) {
           setHitMarker(true);
           setTimeout(() => setHitMarker(false), 150);
-          addLog(`Hit at ${result.point.x.toFixed(1)},${result.point.y.toFixed(1)},${result.point.z.toFixed(1)}`);
 
-          // Check if hit an AI bot
+          // Check if hit an AI bot (fallback raycast hit)
           if (result.id && result.id.startsWith('bot_')) {
             const token = getToken();
             fetch(`/api/rooms/${roomId}/ai/${result.id}/damage`, {
@@ -374,24 +515,39 @@ export default function PlayMode({ navigate }) {
           }
 
           if (net.isConnected && pvpEnabled) {
-            const dir = new THREE.Vector3();
-            camera.getWorldDirection(dir);
             net.sendShoot(
               { x: camera.position.x, y: camera.position.y, z: camera.position.z },
               { x: dir.x, y: dir.y, z: dir.z }
             );
-            // Check if we hit a remote player
-            remotePlayerMeshes.forEach((entry, pid) => {
-              const d = entry.mesh.position.distanceTo(result.point);
-              if (d < 1.0) {
-                net.sendDamage(pid, weaponDamage);
-              }
-            });
           }
         }
       }
     };
     document.addEventListener('mousedown', onMouseDown);
+
+    // AI-player collision damage
+    let aiDamageCooldown = 0;
+    function checkAICollisions(dt) {
+      aiDamageCooldown = Math.max(0, aiDamageCooldown - dt);
+      if (!player.body || aiDamageCooldown > 0) return;
+      const px = player.body.position.x;
+      const py = player.body.position.y;
+      const pz = player.body.position.z;
+      aiMeshes.forEach((aiMesh) => {
+        const dx = aiMesh.position.x - px;
+        const dy = aiMesh.position.y - py;
+        const dz = aiMesh.position.z - pz;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < 1.5) {
+          // Find attack damage from spawns
+          const spawnData = aiBotSpawns.find(b => `bot_${b.id}` === aiMesh.userData?.agentId);
+          const dmg = spawnData?.attackDamage ?? (projectSettings?.aiAttackDamage ?? 10);
+          player.takeDamage(dmg);
+          setHealth(player.health);
+          aiDamageCooldown = 1.0; // 1 second cooldown between hits
+        }
+      });
+    }
 
     // Kill volume check
     let killCooldown = false;
@@ -422,6 +578,7 @@ export default function PlayMode({ navigate }) {
     let animId;
     let last = performance.now();
     let bobPhase = 0;
+    let footstepAccum = 0;
     function animate() {
       animId = requestAnimationFrame(animate);
       const now = performance.now();
@@ -430,10 +587,12 @@ export default function PlayMode({ navigate }) {
 
       player.update(dt);
       physics.step(dt);
+      updateProjectiles(dt);
       checkKillVolumes();
+      checkAICollisions(dt);
       setHealth(player.health);
 
-      // Camera bob based on movement speed
+      // Camera bob + footsteps based on movement speed
       if (player.body) {
         const vx = player.body.velocity.x;
         const vz = player.body.velocity.z;
@@ -442,8 +601,30 @@ export default function PlayMode({ navigate }) {
         if (moveSpd > 0.5 && player.isGrounded) {
           bobPhase += dt * moveSpd * 2.5;
           camera.position.y += Math.sin(bobPhase) * 0.035;
+          // Footstep sound at each stride
+          footstepAccum += dt * moveSpd;
+          if (footstepAccum > 1.4) {
+            footstepAccum = 0;
+            playFootstepSound(audioCtx);
+          }
+        } else {
+          footstepAccum = 0;
         }
       }
+
+      // Smooth-interpolate AI meshes toward target positions
+      aiMeshes.forEach((aiMesh, agentId) => {
+        const tp = aiTargetPositions.get(agentId);
+        if (tp) {
+          aiMesh.position.lerp(new THREE.Vector3(tp.x || 0, tp.y || 0, tp.z || 0), 0.12);
+          // Face toward movement direction
+          const dx = (tp.x || 0) - aiMesh.position.x;
+          const dz = (tp.z || 0) - aiMesh.position.z;
+          if (Math.abs(dx) > 0.05 || Math.abs(dz) > 0.05) {
+            aiMesh.rotation.y = Math.atan2(dx, dz);
+          }
+        }
+      });
 
       // Interpolate remote players
       remotePlayerMeshes.forEach(entry => {
@@ -487,6 +668,8 @@ export default function PlayMode({ navigate }) {
       input.dispose();
       net.disconnect();
       clearInterval(aiPollTimer);
+      // Clean up remaining projectiles
+      projectiles.forEach(p => { scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); });
       setOnlineCount(0);
       canvas.removeEventListener('click', requestLock);
       document.removeEventListener('mousedown', onMouseDown);
@@ -494,6 +677,7 @@ export default function PlayMode({ navigate }) {
       document.removeEventListener('pointerlockchange', onPointerLockChange);
       document.exitPointerLock?.();
       floorTex.dispose();
+      if (audioCtx) audioCtx.close().catch(() => {});
       renderer.dispose();
     };
   // PlayMode sets up the entire 3D scene on mount. Re-running when sceneObjects etc.

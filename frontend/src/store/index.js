@@ -21,6 +21,9 @@ export const useStore = create((set) => ({
   selectedObjectId: null,
   setSelectedObjectId: (id) => set({ selectedObjectId: id }),
 
+  selectedObjectIds: [],
+  setSelectedObjectIds: (ids) => set({ selectedObjectIds: ids }),
+
   isPlaying: false,
   setIsPlaying: (v) => set({ isPlaying: v }),
 
@@ -64,6 +67,8 @@ export const useStore = create((set) => ({
   projectSettings: {
     pvpDamage: true,
     weaponDamage: 25,
+    aiAttackDamage: 10,
+    aiHealth: 100,
     maxPlayers: 8,
   },
   updateProjectSettings: (updates) => set((s) => ({ projectSettings: { ...s.projectSettings, ...updates } })),

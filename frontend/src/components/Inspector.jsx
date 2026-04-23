@@ -83,6 +83,7 @@ export default function Inspector({ viewportRef }) {
   };
 
   const isMesh = ['cube', 'sphere', 'plane'].includes(obj.type);
+  const isPhysicsMesh = ['cube', 'sphere'].includes(obj.type);
   const isLight = ['directionalLight', 'pointLight', 'spotlight'].includes(obj.type);
   const isTerrain = obj.type === 'terrain';
   const isSpawn = obj.type === 'spawnPoint';
@@ -178,12 +179,102 @@ export default function Inspector({ viewportRef }) {
               </div>
               <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>{mat.color || '#888888'}</span>
             </div>
+            {!isTerrain && (
+              <div className="field-row" style={{ marginTop: '4px' }}>
+                <span className="field-label">Wireframe</span>
+                <input
+                  type="checkbox"
+                  checked={!!mat.wireframe}
+                  onChange={e => updateMaterial({ wireframe: e.target.checked })}
+                  style={{ width: 'auto', padding: 0 }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Texture */}
+      {(isMesh || isTerrain) && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">🖼 Texture</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Texture URL</span>
+              <input
+                type="text"
+                value={obj.textureUrl || ''}
+                onChange={e => updateSceneObject(obj.id, { textureUrl: e.target.value })}
+                placeholder="https://... or local path"
+                style={{ flex: 1, fontSize: '11px' }}
+              />
+            </div>
             <div className="field-row" style={{ marginTop: '4px' }}>
-              <span className="field-label">Wireframe</span>
+              <span className="field-label">Upload File</span>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: '11px' }}
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      updateSceneObject(obj.id, { textureUrl: ev.target.result });
+                      if (viewportRef?.current?.updateObjectTexture) {
+                        viewportRef.current.updateObjectTexture(obj.id, ev.target.result, obj.textureRepeat || 1);
+                      }
+                    };
+                    reader.readAsDataURL(file);
+                  };
+                  input.click();
+                }}
+              >📂 Browse</button>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Tiling</span>
+              <input
+                type="range"
+                min="1" max="50" step="1"
+                value={obj.textureRepeat || 1}
+                onChange={e => {
+                  const v = parseInt(e.target.value);
+                  updateSceneObject(obj.id, { textureRepeat: v });
+                  if (viewportRef?.current?.updateObjectTexture) {
+                    viewportRef.current.updateObjectTexture(obj.id, obj.textureUrl || null, v);
+                  }
+                }}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: '11px', width: '24px', textAlign: 'right' }}>{obj.textureRepeat || 1}x</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Physics (cube and sphere only) */}
+      {isPhysicsMesh && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">⚙ Physics</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Simulate Physics</span>
               <input
                 type="checkbox"
-                checked={!!mat.wireframe}
-                onChange={e => updateMaterial({ wireframe: e.target.checked })}
+                checked={!!obj.simulatePhysics}
+                onChange={e => updateSceneObject(obj.id, { simulatePhysics: e.target.checked })}
+                style={{ width: 'auto', padding: 0 }}
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Enable Collision</span>
+              <input
+                type="checkbox"
+                checked={obj.enableCollision !== false}
+                onChange={e => updateSceneObject(obj.id, { enableCollision: e.target.checked })}
                 style={{ width: 'auto', padding: 0 }}
               />
             </div>
@@ -282,22 +373,22 @@ export default function Inspector({ viewportRef }) {
               <input
                 type="range"
                 min="1" max="30" step="0.5"
-                value={obj.brushSize || 5}
+                value={obj.brushSize || 8}
                 onChange={e => updateSceneObject(obj.id, { brushSize: parseFloat(e.target.value) })}
                 style={{ flex: 1 }}
               />
-              <span style={{ fontSize: '11px', width: '24px', textAlign: 'right' }}>{obj.brushSize || 5}</span>
+              <span style={{ fontSize: '11px', width: '24px', textAlign: 'right' }}>{obj.brushSize || 8}</span>
             </div>
             <div className="field-row">
               <span className="field-label">Strength</span>
               <input
                 type="range"
-                min="0.01" max="1" step="0.01"
-                value={obj.brushStrength || 0.1}
+                min="0.01" max="2" step="0.01"
+                value={obj.brushStrength || 0.3}
                 onChange={e => updateSceneObject(obj.id, { brushStrength: parseFloat(e.target.value) })}
                 style={{ flex: 1 }}
               />
-              <span style={{ fontSize: '11px', width: '30px', textAlign: 'right' }}>{(obj.brushStrength || 0.1).toFixed(2)}</span>
+              <span style={{ fontSize: '11px', width: '30px', textAlign: 'right' }}>{(obj.brushStrength || 0.3).toFixed(2)}</span>
             </div>
             <div style={{ paddingTop: '4px' }}>
               <label style={{ display: 'block', cursor: 'pointer' }}>
@@ -391,6 +482,16 @@ export default function Inspector({ viewportRef }) {
                 <option value="zombie">Zombie</option>
                 <option value="soldier">Soldier</option>
               </select>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Health</span>
+              <input
+                type="number"
+                value={obj.aiHealth ?? 100}
+                onChange={e => updateSceneObject(obj.id, { aiHealth: parseInt(e.target.value) || 100 })}
+                step="10" min="1"
+                style={{ flex: 1 }}
+              />
             </div>
             <div className="field-row">
               <span className="field-label">Patrol R.</span>
