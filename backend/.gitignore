@@ -1,0 +1,29 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Database (generated at runtime)
+*.db
+*.db-shm
+*.db-wal
+
+# Settings (generated at runtime – contains admin-configured values)
+settings.json
+
+# Uploaded assets (runtime data)
+uploads/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
