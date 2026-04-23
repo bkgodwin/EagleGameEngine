@@ -4,6 +4,7 @@ export class PlayerController {
     this.camera=camera; this.physics=physicsManager; this.input=inputManager;
     this.health=100; this.speed=5; this.sprintSpeed=10; this.jumpVelocity=8;
     this.isGrounded=false; this.yaw=0; this.pitch=0; this.bodyId='player'; this.body=null;
+    this.isCrouching=false;
     this._moveDir=new THREE.Vector3();
   }
   init(spawnPosition={x:0,y:2,z:0}){
@@ -17,8 +18,10 @@ export class PlayerController {
     this.pitch=Math.max(-Math.PI/2+0.01,Math.min(Math.PI/2-0.01,this.pitch));
     this.camera.quaternion.setFromEuler(new THREE.Euler(this.pitch,this.yaw,0,'YXZ'));
     if(!this.body)return;
-    const sprint=this.input.isKeyDown('ShiftLeft')||this.input.isKeyDown('Shift');
-    const spd=sprint?this.sprintSpeed:this.speed;
+    const isCrouching=this.input.isKeyDown('ControlLeft')||this.input.isKeyDown('ControlRight')||this.input.isKeyDown('Control');
+    this.isCrouching=isCrouching;
+    const sprint=(this.input.isKeyDown('ShiftLeft')||this.input.isKeyDown('Shift'))&&!isCrouching;
+    const spd=isCrouching?this.speed*0.5:sprint?this.sprintSpeed:this.speed;
     const fwd=new THREE.Vector3(-Math.sin(this.yaw),0,-Math.cos(this.yaw));
     const right=new THREE.Vector3(Math.cos(this.yaw),0,-Math.sin(this.yaw));
     this._moveDir.set(0,0,0);
@@ -27,8 +30,9 @@ export class PlayerController {
     if(this.input.isKeyDown('KeyA')||this.input.isKeyDown('a'))this._moveDir.addScaledVector(right,-spd);
     if(this.input.isKeyDown('KeyD')||this.input.isKeyDown('d'))this._moveDir.addScaledVector(right,spd);
     this.body.velocity.x=this._moveDir.x; this.body.velocity.z=this._moveDir.z;
-    if((this.input.isKeyDown('Space')||this.input.isKeyDown(' '))&&this.isGrounded){this.body.velocity.y=this.jumpVelocity;this.isGrounded=false;}
-    this.camera.position.set(this.body.position.x,this.body.position.y+0.8,this.body.position.z);
+    if((this.input.isKeyDown('Space')||this.input.isKeyDown(' '))&&this.isGrounded&&!isCrouching){this.body.velocity.y=this.jumpVelocity;this.isGrounded=false;}
+    const eyeHeight=isCrouching?0.3:0.8;
+    this.camera.position.set(this.body.position.x,this.body.position.y+eyeHeight,this.body.position.z);
   }
   shoot(scene){
     const ray=new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(0,0),this.camera);

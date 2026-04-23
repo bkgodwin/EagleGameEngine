@@ -38,6 +38,7 @@ export const getProjects = () => request('GET', '/projects');
 export const createProject = (name, data) => request('POST', '/projects', { name, data });
 export const getProject = (id) => request('GET', `/projects/${id}`);
 export const saveProject = (id, data) => request('PUT', `/projects/${id}`, data);
+export const renameProject = (id, name) => request('PUT', `/projects/${id}`, { name });
 export const deleteProject = (id) => request('DELETE', `/projects/${id}`);
 
 export async function exportProject(id) {
