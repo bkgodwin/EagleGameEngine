@@ -36,10 +36,11 @@ export class NetworkManager {
 
   // ---------------------------------------------------------------------------
 
-  connect(roomId, playerId, username) {
+  connect(roomId, playerId, username, projectName) {
     this.roomId = roomId;
     this.playerId = playerId;
     this.username = username;
+    this.projectName = projectName || roomId;
     this._destroyed = false;
     this._openSocket();
   }
@@ -100,6 +101,7 @@ export class NetworkManager {
         room_id: this.roomId,
         player_id: this.playerId,
         username: this.username,
+        project_name: this.projectName || this.roomId,
       });
       if (this.onConnected) this.onConnected();
     };

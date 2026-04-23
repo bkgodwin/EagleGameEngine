@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getProjects, createProject, getProject, deleteProject, renameProject, exportProject, clearToken } from '../api/index.js';
+import { getProjects, createProject, getProject, deleteProject, renameProject, exportProject, clearToken, listRooms } from '../api/index.js';
 import { useStore } from '../store/index.js';
 import '../styles/theme.css';
 
@@ -13,6 +13,9 @@ export default function Dashboard({ navigate }) {
   const [showNewInput, setShowNewInput] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [showServerBrowser, setShowServerBrowser] = useState(false);
+  const [rooms, setActiveRooms] = useState([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
 
   useEffect(() => {
     fetchProjects();
@@ -100,6 +103,19 @@ export default function Dashboard({ navigate }) {
     navigate('login');
   }
 
+  async function openServerBrowser() {
+    setShowServerBrowser(true);
+    setRoomsLoading(true);
+    try {
+      const data = await listRooms();
+      setActiveRooms(data);
+    } catch (_) {
+      setActiveRooms([]);
+    } finally {
+      setRoomsLoading(false);
+    }
+  }
+
   function formatDate(str) {
     if (!str) return '—';
     try { return new Date(str).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
@@ -117,6 +133,7 @@ export default function Dashboard({ navigate }) {
           {user?.username || user?.email || 'User'}
           {user?.is_admin && <span style={{ marginLeft: '6px', background: 'var(--color-primary)', color: '#fff', borderRadius: '3px', padding: '1px 6px', fontSize: '10px', verticalAlign: 'middle' }}>ADMIN</span>}
         </span>
+        <button className="btn btn-ghost" onClick={openServerBrowser} style={{ fontSize: '13px' }}>🌐 Server Browser</button>
         <button className="btn btn-ghost" onClick={handleLogout} style={{ fontSize: '13px' }}>Logout</button>
       </header>
 
@@ -242,6 +259,65 @@ export default function Dashboard({ navigate }) {
           </div>
         )}
       </main>
+
+      {/* Server Browser Modal */}
+      {showServerBrowser && (
+        <div className="modal-overlay">
+          <div className="modal-panel" style={{ minWidth: '480px' }}>
+            <div className="modal-title">
+              🌐 Server Browser
+              <button className="modal-close" onClick={() => setShowServerBrowser(false)}>×</button>
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '16px' }}>
+              Active game sessions. Hit <strong>Play</strong> in the editor to host your own server.
+            </p>
+            {roomsLoading ? (
+              <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>Loading servers…</div>
+            ) : rooms.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+                No active servers found.<br />Open a project and hit Play to host one.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {rooms.map(room => (
+                  <div key={room.room_id} style={{ background: 'var(--bg-dark)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--color-accent)' }}>
+                        {room.host_username}'s Server
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {room.project_name} · {room.player_count}/{room.max_players} players
+                      </div>
+                    </div>
+                    <div style={{
+                      width: '10px', height: '10px', borderRadius: '50%',
+                      background: room.player_count < room.max_players ? '#4caf50' : '#f44336',
+                      flexShrink: 0,
+                    }} />
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: '12px' }}
+                      disabled={room.player_count >= room.max_players}
+                      title={room.player_count >= room.max_players ? 'Server full' : 'Join server'}
+                      onClick={() => {
+                        // Joining a server: just notify user they need to open a project with same room ID
+                        alert(`To join, open a project and make sure you're using room: ${room.room_id}`);
+                      }}
+                    >
+                      {room.player_count >= room.max_players ? 'Full' : 'Join'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px' }}>
+              <button className="btn btn-ghost" onClick={openServerBrowser} style={{ fontSize: '12px' }}>⟳ Refresh</button>
+              <button className="btn btn-ghost" onClick={() => setShowServerBrowser(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

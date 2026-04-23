@@ -11,6 +11,7 @@ const TYPE_ICONS = {
   terrain: '🏔️',
   spawnPoint: '🚩',
   killVolume: '💀',
+  aiBot: '🤖',
 };
 
 const ADD_TYPES = [
@@ -23,6 +24,7 @@ const ADD_TYPES = [
   { type: 'terrain', label: 'Terrain' },
   { type: 'spawnPoint', label: 'Spawn Point' },
   { type: 'killVolume', label: 'Kill Volume' },
+  { type: 'aiBot', label: 'AI Bot' },
 ];
 
 export default function SceneHierarchy({ viewportRef }) {

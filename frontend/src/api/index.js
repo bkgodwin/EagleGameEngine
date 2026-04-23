@@ -66,3 +66,7 @@ export const adminResetPassword = (id, newPwd) => request('POST', `/admin/users/
 export const adminGetSettings = () => request('GET', '/admin/settings');
 export const adminUpdateSettings = (settings) => request('PUT', '/admin/settings', settings);
 export const adminGetStats = () => request('GET', '/admin/stats');
+
+export const listRooms = () => request('GET', '/multiplayer/rooms');
+export const spawnAIAgent = (roomId, data) => request('POST', `/rooms/${roomId}/ai/spawn`, data);
+export const damageAIAgent = (roomId, agentId, amount) => request('POST', `/rooms/${roomId}/ai/${agentId}/damage`, { amount });

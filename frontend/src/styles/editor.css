@@ -1,7 +1,7 @@
 /* Editor layout */
 .editor-container {
   display: grid;
-  grid-template-rows: 48px 1fr 160px;
+  grid-template-rows: 48px 1fr minmax(32px, 160px);
   grid-template-columns: 240px 1fr 280px;
   width: 100vw;
   height: 100vh;
