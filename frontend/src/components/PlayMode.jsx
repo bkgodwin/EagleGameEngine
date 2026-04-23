@@ -20,13 +20,39 @@ async function fetchAIAgents(roomId) {
   return [];
 }
 
+// Canvas-based grid texture (same as editor)
+function makeGridTexture() {
+  const size = 128;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#4a6a4a';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#5a7a5a';
+  ctx.fillRect(0, 0, size / 2, size / 2);
+  ctx.fillRect(size / 2, size / 2, size / 2, size / 2);
+  ctx.strokeStyle = '#3a5a3a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0, 0, size, size);
+  ctx.strokeRect(0, 0, size / 2, size / 2);
+  ctx.strokeRect(size / 2, size / 2, size / 2, size / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
 export default function PlayMode({ navigate }) {
   const canvasRef = useRef(null);
   const [health, setHealth] = useState(100);
   const [playerCount, setPlayerCount] = useState(1);
   const [killMessage, setKillMessage] = useState('');
   const [chatMessages, setChatMessages] = useState([]);
-  const { setIsPlaying, sceneObjects, addLog, currentProject, user, setOnlineCount } = useStore();
+  const [shootFlash, setShootFlash] = useState(false);
+  const [hitMarker, setHitMarker] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [speed, setSpeed] = useState(0);
+  const { setIsPlaying, sceneObjects, addLog, currentProject, user, setOnlineCount, globalLighting, projectSettings } = useStore();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -46,24 +72,37 @@ export default function PlayMode({ navigate }) {
     renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
     renderer.shadowMap.enabled = true;
 
-    // Ambient
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const sun = new THREE.DirectionalLight(0xffffff, 1);
-    sun.position.set(50, 80, 30);
+    // Global lighting from settings
+    const ambientColor = globalLighting?.ambientColor || '#404060';
+    const ambientIntensity = globalLighting?.ambientIntensity ?? 0.5;
+    scene.add(new THREE.AmbientLight(new THREE.Color(ambientColor), ambientIntensity));
+
+    const sun = new THREE.DirectionalLight(
+      new THREE.Color(globalLighting?.sunColor || '#ffffff'),
+      globalLighting?.sunIntensity ?? 1
+    );
+    sun.position.set(
+      globalLighting?.sunX ?? 50,
+      globalLighting?.sunY ?? 80,
+      globalLighting?.sunZ ?? 30
+    );
     sun.castShadow = true;
     scene.add(sun);
 
-    // Grid floor
+    // Grid floor – 1 cell = 1 unit, 2 cells = player height
+    const floorTex = makeGridTexture();
+    floorTex.repeat.set(200, 200);
     const floorGeo = new THREE.PlaneGeometry(200, 200);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x3a5a3a });
+    const floorMat = new THREE.MeshStandardMaterial({ map: floorTex });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
 
-    // Build scene from objects
+    // Build scene from store objects
     const killVolumes = [];
     let spawnPos = new THREE.Vector3(0, 2, 0);
+    const aiBotSpawns = [];
 
     sceneObjects.forEach(obj => {
       if (obj.type === 'spawnPoint') {
@@ -73,6 +112,18 @@ export default function PlayMode({ navigate }) {
       }
       if (obj.type === 'killVolume') {
         killVolumes.push({ position: obj.position || { x: 0, y: 0, z: 0 }, scale: obj.scale || { x: 2, y: 2, z: 2 }, message: obj.deathMessage || 'You were killed!' });
+        return;
+      }
+      if (obj.type === 'aiBot') {
+        aiBotSpawns.push({
+          id: obj.id,
+          position: obj.position || { x: 0, y: 0, z: 0 },
+          aiType: obj.aiType || 'zombie',
+          patrolRadius: obj.patrolRadius || 10,
+          detectRadius: obj.detectRadius || 15,
+          attackDamage: obj.attackDamage || 10,
+        });
+        return;
       }
 
       let mesh;
@@ -95,7 +146,9 @@ export default function PlayMode({ navigate }) {
             positions.needsUpdate = true;
             geo.computeVertexNormals();
           }
-          mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x3d5a2a }));
+          const terrainTex = makeGridTexture();
+          terrainTex.repeat.set(50, 50);
+          mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: terrainTex }));
           break;
         }
         case 'directionalLight': { const l = new THREE.DirectionalLight(0xffffff, 1); l.position.set(pos.x, pos.y, pos.z); scene.add(l); return; }
@@ -126,13 +179,12 @@ export default function PlayMode({ navigate }) {
     player.init({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z });
 
     // ---------------------------------------------------------------------------
-    // Multiplayer – remote player meshes
+    // Multiplayer
     // ---------------------------------------------------------------------------
     const roomId = currentProject ? `project_${currentProject.id}` : 'default';
     const localPlayerId = user?.id ? `player_${user.id}_${Date.now()}` : `guest_${Math.random().toString(36).slice(2, 8)}`;
     const localUsername = user?.username || 'Player';
 
-    /** Map of remote player_id → { mesh, targetPos, targetRotY } */
     const remotePlayerMeshes = new Map();
 
     function createRemotePlayerMesh(pid) {
@@ -194,7 +246,6 @@ export default function PlayMode({ navigate }) {
     };
 
     net.onShootEvent = (msg) => {
-      // Draw a remote shoot tracer
       if (msg.origin && msg.direction) {
         const start = new THREE.Vector3(msg.origin.x, msg.origin.y, msg.origin.z);
         const dir = new THREE.Vector3(msg.direction.x, msg.direction.y, msg.direction.z).normalize();
@@ -217,27 +268,43 @@ export default function PlayMode({ navigate }) {
       setChatMessages(prev => [...prev.slice(-9), `${msg.username || msg.player_id}: ${msg.text}`]);
     };
 
-    net.connect(roomId, localPlayerId, localUsername);
+    net.connect(roomId, localPlayerId, localUsername, currentProject?.name);
 
     // ---------------------------------------------------------------------------
-    // AI agents
+    // Spawn AI bots from scene aiBot objects
     // ---------------------------------------------------------------------------
     const aiMeshes = new Map(); // agent_id → mesh
 
     function getOrCreateAIMesh(agentId, agentType) {
       if (aiMeshes.has(agentId)) return aiMeshes.get(agentId);
       const color = agentType === 'soldier' ? 0x4caf50 : 0x8b0000;
+      const group = new THREE.Group();
       const body = new THREE.Mesh(
         new THREE.CapsuleGeometry(0.35, 1.2, 4, 8),
         new THREE.MeshStandardMaterial({ color })
       );
       body.position.y = 0.9;
-      const group = new THREE.Group();
       group.add(body);
       scene.add(group);
       aiMeshes.set(agentId, group);
       return group;
     }
+
+    // Spawn AI agents defined in scene
+    aiBotSpawns.forEach(bot => {
+      const agentId = `bot_${bot.id}`;
+      getOrCreateAIMesh(agentId, bot.aiType);
+      const token = getToken();
+      fetch(`/api/rooms/${roomId}/ai/spawn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: JSON.stringify({
+          agent_id: agentId,
+          type: bot.aiType,
+          position: bot.position,
+        }),
+      }).catch(() => {});
+    });
 
     let aiPollTimer = null;
 
@@ -256,9 +323,19 @@ export default function PlayMode({ navigate }) {
       });
     }
 
-    // Poll AI state every 200 ms
     aiPollTimer = setInterval(pollAI, 200);
     pollAI();
+
+    // ---------------------------------------------------------------------------
+    // Pointer lock
+    // ---------------------------------------------------------------------------
+    const requestLock = () => { if (document.pointerLockElement !== canvas) canvas.requestPointerLock(); };
+    canvas.addEventListener('click', requestLock);
+
+    const onPointerLockChange = () => {
+      setIsLocked(document.pointerLockElement === canvas);
+    };
+    document.addEventListener('pointerlockchange', onPointerLockChange);
 
     // Resize
     const resizeObs = new ResizeObserver(() => {
@@ -269,24 +346,50 @@ export default function PlayMode({ navigate }) {
     });
     resizeObs.observe(canvas.parentElement || canvas);
 
-    // Pointer lock
-    const requestLock = () => canvas.requestPointerLock();
-    canvas.addEventListener('click', requestLock);
-
     // Shooting
     let netUpdateAccum = 0;
+    const weaponDamage = projectSettings?.weaponDamage ?? 25;
+    const pvpEnabled = projectSettings?.pvpDamage ?? true;
+
     const onMouseDown = (e) => {
       if (e.button === 0 && document.pointerLockElement === canvas) {
+        // Muzzle flash
+        setShootFlash(true);
+        setTimeout(() => setShootFlash(false), 80);
+
         const result = player.shoot(scene, []);
         if (result) {
-          addLog(`Hit object ${result.id} at ${result.point.x.toFixed(1)},${result.point.y.toFixed(1)},${result.point.z.toFixed(1)}`);
-          if (net.isConnected) {
+          setHitMarker(true);
+          setTimeout(() => setHitMarker(false), 150);
+          addLog(`Hit at ${result.point.x.toFixed(1)},${result.point.y.toFixed(1)},${result.point.z.toFixed(1)}`);
+
+          // Check if hit an AI bot
+          if (result.id && result.id.startsWith('bot_')) {
+            const agentId = result.id.replace(/^bot_/, '');
+            // Actually eagleId is stored on mesh userData from PlayMode scene building
+            // Just send damage to the agent via API
+            const token = getToken();
+            fetch(`/api/rooms/${roomId}/ai/${result.id}/damage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+              body: JSON.stringify({ amount: weaponDamage }),
+            }).catch(() => {});
+          }
+
+          if (net.isConnected && pvpEnabled) {
             const dir = new THREE.Vector3();
             camera.getWorldDirection(dir);
             net.sendShoot(
               { x: camera.position.x, y: camera.position.y, z: camera.position.z },
               { x: dir.x, y: dir.y, z: dir.z }
             );
+            // Check if we hit a remote player
+            remotePlayerMeshes.forEach((entry, pid) => {
+              const d = entry.mesh.position.distanceTo(result.point);
+              if (d < 1.0) {
+                net.sendDamage(pid, weaponDamage);
+              }
+            });
           }
         }
       }
@@ -321,6 +424,7 @@ export default function PlayMode({ navigate }) {
     // Animation loop
     let animId;
     let last = performance.now();
+    let bobPhase = 0;
     function animate() {
       animId = requestAnimationFrame(animate);
       const now = performance.now();
@@ -331,6 +435,18 @@ export default function PlayMode({ navigate }) {
       physics.step(dt);
       checkKillVolumes();
       setHealth(player.health);
+
+      // Camera bob based on movement speed
+      if (player.body) {
+        const vx = player.body.velocity.x;
+        const vz = player.body.velocity.z;
+        const moveSpd = Math.sqrt(vx * vx + vz * vz);
+        setSpeed(Math.round(moveSpd));
+        if (moveSpd > 0.5 && player.isGrounded) {
+          bobPhase += dt * moveSpd * 2.5;
+          camera.position.y += Math.sin(bobPhase) * 0.035;
+        }
+      }
 
       // Interpolate remote players
       remotePlayerMeshes.forEach(entry => {
@@ -358,7 +474,7 @@ export default function PlayMode({ navigate }) {
     }
     animate();
 
-    // Escape to exit
+    // Escape to exit (only when pointer lock is released)
     const exitHandler = (e) => {
       if (e.key === 'Escape' && !document.pointerLockElement) {
         setIsPlaying(false);
@@ -378,27 +494,67 @@ export default function PlayMode({ navigate }) {
       canvas.removeEventListener('click', requestLock);
       document.removeEventListener('mousedown', onMouseDown);
       document.removeEventListener('keydown', exitHandler);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
       document.exitPointerLock?.();
+      floorTex.dispose();
       renderer.dispose();
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 1000 }}>
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block', cursor: 'none' }} />
+
+      {/* Pointer-lock overlay */}
+      {!isLocked && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.55)', pointerEvents: 'none',
+        }}>
+          <div style={{ color: 'white', fontSize: '22px', fontWeight: 700, marginBottom: '12px' }}>🖱 Click to Play</div>
+          <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px' }}>
+            WASD: Move · Space: Jump · Click: Shoot · Escape: Exit
+          </div>
+        </div>
+      )}
 
       {/* Health */}
       <div style={{ position: 'absolute', top: 16, left: 16 }}>
         <HealthBar health={health} />
       </div>
 
-      {/* Crosshair */}
-      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: 'white', fontSize: '20px', pointerEvents: 'none', userSelect: 'none', textShadow: '0 0 3px black', lineHeight: 1 }}>+</div>
+      {/* Muzzle flash */}
+      {shootFlash && (
+        <div style={{
+          position: 'absolute', inset: 0, background: 'rgba(255,255,180,0.18)',
+          pointerEvents: 'none', borderRadius: 0,
+        }} />
+      )}
+
+      {/* Crosshair / hit marker */}
+      <div style={{
+        position: 'absolute', top: '50%', left: '50%',
+        transform: 'translate(-50%,-50%)',
+        color: hitMarker ? '#ff4444' : 'white',
+        fontSize: hitMarker ? '22px' : '20px',
+        fontWeight: hitMarker ? 900 : 400,
+        pointerEvents: 'none', userSelect: 'none',
+        textShadow: '0 0 3px black', lineHeight: 1,
+        transition: 'color 0.1s',
+      }}>+</div>
 
       {/* Player count */}
       <div style={{ position: 'absolute', top: 16, right: 16, color: 'white', fontSize: '14px', background: 'rgba(0,0,0,0.5)', padding: '8px 12px', borderRadius: '4px' }}>
         Players: {playerCount}
       </div>
+
+      {/* Speed indicator */}
+      {speed > 0.5 && (
+        <div style={{ position: 'absolute', bottom: 48, right: 16, color: 'rgba(255,255,255,0.6)', fontSize: '12px', background: 'rgba(0,0,0,0.4)', padding: '4px 8px', borderRadius: '3px' }}>
+          {speed} m/s
+        </div>
+      )}
 
       {/* Kill message */}
       {killMessage && (
@@ -416,10 +572,12 @@ export default function PlayMode({ navigate }) {
         </div>
       )}
 
-      {/* Exit hint */}
-      <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>
-        WASD: Move · Shift: Sprint · Ctrl: Crouch · Space: Jump · Click: Shoot · Escape: Exit
-      </div>
+      {/* Exit hint (when locked) */}
+      {isLocked && (
+        <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>
+          WASD: Move · Shift: Sprint · Ctrl: Crouch · Space: Jump · Click: Shoot · Escape: Exit
+        </div>
+      )}
     </div>
   );
 }

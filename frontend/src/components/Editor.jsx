@@ -12,11 +12,13 @@ import Documentation from './Documentation.jsx';
 import '../styles/editor.css';
 
 export default function Editor({ navigate }) {
-  const { isPlaying } = useStore();
+  const { isPlaying, sceneObjects, currentProject, addLog } = useStore();
   const viewportRef = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
+  const autosaveTimer = useRef(null);
+  const initDone = useRef(false);
 
   // Ctrl+S to save
   useEffect(() => {
@@ -31,6 +33,22 @@ export default function Editor({ navigate }) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
+
+  // Autosave on scene edits (2-second debounce, skip initial load)
+  useEffect(() => {
+    if (!initDone.current) {
+      initDone.current = true;
+      return;
+    }
+    if (!currentProject || isPlaying) return;
+    clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      if (viewportRef.current?.saveProject) {
+        viewportRef.current.saveProject();
+      }
+    }, 2000);
+    return () => clearTimeout(autosaveTimer.current);
+  }, [sceneObjects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isPlaying) return <PlayMode navigate={navigate} />;
 

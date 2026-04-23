@@ -30,6 +30,9 @@ export const useStore = create((set) => ({
   })),
   clearLogs: () => set({ logs: [] }),
 
+  consoleCollapsed: false,
+  setConsoleCollapsed: (v) => set({ consoleCollapsed: v }),
+
   settings: {
     renderDistance: 500,
     shadowQuality: 'low',
@@ -38,6 +41,32 @@ export const useStore = create((set) => ({
     lightingQuality: 'medium',
   },
   updateSettings: (updates) => set((s) => ({ settings: { ...s.settings, ...updates } })),
+
+  snapSettings: {
+    enabled: false,
+    translate: 0.5,
+    rotate: 15,
+    scale: 0.25,
+  },
+  updateSnapSettings: (updates) => set((s) => ({ snapSettings: { ...s.snapSettings, ...updates } })),
+
+  globalLighting: {
+    sunColor: '#ffffff',
+    sunIntensity: 1.0,
+    sunX: 50,
+    sunY: 80,
+    sunZ: 30,
+    ambientColor: '#404060',
+    ambientIntensity: 0.5,
+  },
+  updateGlobalLighting: (updates) => set((s) => ({ globalLighting: { ...s.globalLighting, ...updates } })),
+
+  projectSettings: {
+    pvpDamage: true,
+    weaponDamage: 25,
+    maxPlayers: 8,
+  },
+  updateProjectSettings: (updates) => set((s) => ({ projectSettings: { ...s.projectSettings, ...updates } })),
 
   editorMode: 'select',
   setEditorMode: (mode) => set({ editorMode: mode }),

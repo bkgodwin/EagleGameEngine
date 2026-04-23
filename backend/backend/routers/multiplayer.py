@@ -30,10 +30,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(prefix="/multiplayer", tags=["multiplayer"])
 
-MAX_PLAYERS_PER_ROOM = 10
+MAX_PLAYERS_PER_ROOM = 8
 
 # rooms: { room_id: { player_id: { ws, data } } }
 rooms: dict[str, dict[str, dict]] = {}
+# room metadata: { room_id: { host_username, project_name } }
+room_meta: dict[str, dict] = {}
 
 
 async def _broadcast(room_id: str, message: dict, exclude: str | None = None):
@@ -95,6 +97,13 @@ async def multiplayer_ws(websocket: WebSocket, room_id: str):
                     "health": 100,
                 }
                 rooms[room_id][pid] = {"ws": websocket, "data": player_data}
+
+                # Track room metadata (first player is host)
+                if room_id not in room_meta:
+                    room_meta[room_id] = {
+                        "host_username": msg.get("username", pid),
+                        "project_name": msg.get("project_name", room_id),
+                    }
 
                 # Send current room state to the joiner
                 await _send(websocket, {
@@ -173,14 +182,21 @@ async def multiplayer_ws(websocket: WebSocket, room_id: str):
             rooms[room_id].pop(player_id, None)
             if not rooms[room_id]:
                 del rooms[room_id]
+                room_meta.pop(room_id, None)
             else:
                 await _broadcast(room_id, {"type": "player_left", "player_id": player_id})
 
 
 @router.get("/rooms")
 async def list_rooms():
-    """List active rooms and player counts (public endpoint for lobby)."""
+    """List active rooms with player counts and host names (public endpoint for lobby)."""
     return [
-        {"room_id": rid, "player_count": len(conns)}
+        {
+            "room_id": rid,
+            "player_count": len(conns),
+            "max_players": MAX_PLAYERS_PER_ROOM,
+            "host_username": room_meta.get(rid, {}).get("host_username", rid),
+            "project_name": room_meta.get(rid, {}).get("project_name", rid),
+        }
         for rid, conns in rooms.items()
     ]

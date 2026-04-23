@@ -1,7 +1,31 @@
-import React, { useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
 import { useStore } from '../store/index.js';
 import { saveProject as apiSaveProject } from '../api/index.js';
+
+// --------------------------------------------------------------------------
+// Canvas-based grid texture: 1 cell = 1 world unit, 2 cells = player height
+// --------------------------------------------------------------------------
+function makeGridTexture() {
+  const size = 128;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#7a7a7a';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#9a9a9a';
+  ctx.fillRect(0, 0, size / 2, size / 2);
+  ctx.fillRect(size / 2, size / 2, size / 2, size / 2);
+  ctx.strokeStyle = '#555555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0, 0, size, size);
+  ctx.strokeRect(0, 0, size / 2, size / 2);
+  ctx.strokeRect(size / 2, size / 2, size / 2, size / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
 
 const Viewport = forwardRef((props, ref) => {
   const canvasRef = useRef(null);
@@ -9,12 +33,12 @@ const Viewport = forwardRef((props, ref) => {
   const {
     addSceneObject, removeSceneObject, updateSceneObject,
     setSelectedObjectId, selectedObjectId, sceneObjects,
-    editorMode, addLog, currentProject, settings,
+    editorMode, addLog, currentProject, settings, snapSettings, globalLighting,
   } = useStore();
 
   // Keep a ref to the latest store values accessible inside closures
   const storeRef = useRef({});
-  storeRef.current = { selectedObjectId, editorMode, sceneObjects, settings, currentProject };
+  storeRef.current = { selectedObjectId, editorMode, sceneObjects, settings, snapSettings, globalLighting, currentProject };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -44,16 +68,39 @@ const Viewport = forwardRef((props, ref) => {
     setSize();
 
     // ---- Lights ----
-    const ambient = new THREE.AmbientLight(0x404060, 0.5);
+    const initLighting = storeRef.current.globalLighting;
+    const ambient = new THREE.AmbientLight(
+      new THREE.Color(initLighting.ambientColor),
+      initLighting.ambientIntensity
+    );
     scene.add(ambient);
+    const sunLight = new THREE.DirectionalLight(
+      new THREE.Color(initLighting.sunColor),
+      initLighting.sunIntensity
+    );
+    sunLight.position.set(initLighting.sunX, initLighting.sunY, initLighting.sunZ);
+    sunLight.castShadow = false;
+    scene.add(sunLight);
 
-    // ---- Grid ----
+    // ---- Grid floor with texture ----
+    const gridTex = makeGridTexture();
+    gridTex.repeat.set(200, 200);
+    const floorGeo = new THREE.PlaneGeometry(200, 200);
+    const floorMat = new THREE.MeshStandardMaterial({ map: gridTex });
+    const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+    floorMesh.rotation.x = -Math.PI / 2;
+    floorMesh.position.y = -0.01;
+    floorMesh.receiveShadow = true;
+    scene.add(floorMesh);
+
     const grid = new THREE.GridHelper(200, 200, 0x444444, 0x222222);
+    grid.position.y = 0;
     scene.add(grid);
 
     // ---- Object maps ----
     const objectMap = new Map(); // id -> { mesh, data }
     const gizmoGroup = new THREE.Group();
+    gizmoGroup.userData.isGizmoGroup = true;
     scene.add(gizmoGroup);
 
     // ---- Selection box ----
@@ -66,6 +113,9 @@ const Viewport = forwardRef((props, ref) => {
     let isPanning = false;
     let lastMouse = { x: 0, y: 0 };
 
+    // ---- Gizmo drag state ----
+    let draggingGizmo = null; // { axis, type, objInitPos, objInitRot, objInitScale, startX, startY }
+
     function updateCamera() {
       camera.position.x = target.x + spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta);
       camera.position.y = target.y + spherical.radius * Math.cos(spherical.phi);
@@ -74,16 +124,126 @@ const Viewport = forwardRef((props, ref) => {
     }
     updateCamera();
 
+    // ---- Snap helper ----
+    function snapValue(val, step) {
+      if (!step || step <= 0) return val;
+      return Math.round(val / step) * step;
+    }
+
+    // ---- Gizmo drag apply ----
+    function applyGizmoDrag(clientX, clientY) {
+      if (!draggingGizmo) return;
+      const { axis, type, objInitPos, objInitRot, objInitScale, startX, startY } = draggingGizmo;
+      const totalDx = clientX - startX;
+      const totalDy = clientY - startY;
+      const sel = storeRef.current.selectedObjectId;
+      const entry = objectMap.get(sel);
+      if (!entry) return;
+      const { snapSettings: snap } = storeRef.current;
+
+      const worldDir = new THREE.Vector3(
+        axis === 'x' ? 1 : 0,
+        axis === 'y' ? 1 : 0,
+        axis === 'z' ? 1 : 0
+      );
+
+      if (type === 'translate') {
+        const screenStart = objInitPos.clone().project(camera);
+        const screenEnd = objInitPos.clone().add(worldDir).project(camera);
+        const sdx = screenEnd.x - screenStart.x;
+        const sdy = screenEnd.y - screenStart.y;
+        const sLen = Math.sqrt(sdx * sdx + sdy * sdy);
+        if (sLen < 0.001) return;
+        const ndx = (totalDx / canvas.clientWidth) * 2;
+        const ndy = -(totalDy / canvas.clientHeight) * 2;
+        const dot = ndx * (sdx / sLen) + ndy * (sdy / sLen);
+        let delta = dot * spherical.radius * 0.5;
+        if (snap.enabled) delta = snapValue(delta, snap.translate);
+        const newPos = objInitPos.clone().addScaledVector(worldDir, delta);
+        entry.mesh.position.copy(newPos);
+        updateSceneObject(sel, { position: { x: newPos.x, y: newPos.y, z: newPos.z } });
+      } else if (type === 'rotate') {
+        const sensitivity = 0.01;
+        let delta = axis === 'y' ? totalDx * sensitivity : axis === 'x' ? totalDy * sensitivity : totalDx * sensitivity;
+        if (snap.enabled) {
+          const stepRad = (snap.rotate * Math.PI) / 180;
+          delta = snapValue(delta, stepRad);
+        }
+        const nx = objInitRot.x + (axis === 'x' ? delta : 0);
+        const ny = objInitRot.y + (axis === 'y' ? delta : 0);
+        const nz = objInitRot.z + (axis === 'z' ? delta : 0);
+        entry.mesh.rotation.set(nx, ny, nz);
+        updateSceneObject(sel, { rotation: { x: nx, y: ny, z: nz } });
+      } else if (type === 'scale') {
+        const screenStart = objInitPos.clone().project(camera);
+        const screenEnd = objInitPos.clone().add(worldDir).project(camera);
+        const sdx = screenEnd.x - screenStart.x;
+        const sdy = screenEnd.y - screenStart.y;
+        const sLen = Math.sqrt(sdx * sdx + sdy * sdy);
+        if (sLen < 0.001) return;
+        const ndx = (totalDx / canvas.clientWidth) * 2;
+        const ndy = -(totalDy / canvas.clientHeight) * 2;
+        const dot = ndx * (sdx / sLen) + ndy * (sdy / sLen);
+        let delta = dot * spherical.radius * 0.15;
+        if (snap.enabled) delta = snapValue(delta, snap.scale);
+        const ns = objInitScale.clone();
+        if (axis === 'x') ns.x = Math.max(0.01, objInitScale.x + delta);
+        else if (axis === 'y') ns.y = Math.max(0.01, objInitScale.y + delta);
+        else ns.z = Math.max(0.01, objInitScale.z + delta);
+        entry.mesh.scale.copy(ns);
+        updateSceneObject(sel, { scale: { x: ns.x, y: ns.y, z: ns.z } });
+      }
+    }
+
     // ---- Pointer events ----
     const onMouseDown = (e) => {
+      lastMouse = { x: e.clientX, y: e.clientY };
+
+      if (e.button === 0) {
+        // Check gizmo hit first
+        const rect = canvas.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+        const gizmoMeshes = [];
+        gizmoGroup.traverse(obj => { if (obj.isMesh && obj.userData.gizmoAxis) gizmoMeshes.push(obj); });
+        const gizmoHits = raycaster.intersectObjects(gizmoMeshes, false);
+        if (gizmoHits.length > 0) {
+          const gd = gizmoHits[0].object.userData;
+          const sel = storeRef.current.selectedObjectId;
+          const entry = objectMap.get(sel);
+          if (entry) {
+            draggingGizmo = {
+              axis: gd.gizmoAxis,
+              type: gd.gizmoType,
+              objInitPos: entry.mesh.position.clone(),
+              objInitRot: { x: entry.mesh.rotation.x, y: entry.mesh.rotation.y, z: entry.mesh.rotation.z },
+              objInitScale: entry.mesh.scale.clone(),
+              startX: e.clientX,
+              startY: e.clientY,
+            };
+          }
+          e.preventDefault();
+          return;
+        }
+      }
+
       if (e.button === 2) { isOrbiting = true; e.preventDefault(); }
       if (e.button === 1) { isPanning = true; e.preventDefault(); }
-      lastMouse = { x: e.clientX, y: e.clientY };
     };
+
     const onMouseMove = (e) => {
       const dx = e.clientX - lastMouse.x;
       const dy = e.clientY - lastMouse.y;
       lastMouse = { x: e.clientX, y: e.clientY };
+
+      if (draggingGizmo) {
+        applyGizmoDrag(e.clientX, e.clientY);
+        return;
+      }
 
       if (isOrbiting) {
         spherical.theta -= dx * 0.005;
@@ -94,7 +254,7 @@ const Viewport = forwardRef((props, ref) => {
       if (isPanning) {
         const right = new THREE.Vector3();
         const up = new THREE.Vector3();
-        camera.getWorldDirection(new THREE.Vector3()); // ensure matrix is fresh
+        camera.getWorldDirection(new THREE.Vector3());
         right.crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
         up.copy(camera.up);
         const panScale = spherical.radius * 0.001;
@@ -103,7 +263,8 @@ const Viewport = forwardRef((props, ref) => {
         updateCamera();
       }
     };
-    const onMouseUp = (e) => {
+    const onMouseUp = () => {
+      draggingGizmo = null;
       isOrbiting = false;
       isPanning = false;
     };
@@ -117,6 +278,8 @@ const Viewport = forwardRef((props, ref) => {
     // ---- Click selection ----
     const onClick = (e) => {
       if (e.button !== 0) return;
+      // Don't fire selection right after a gizmo drag
+      if (e.detail === 1 && e.movementX === 0 && e.movementY === 0) { /* proceed */ }
       const rect = canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -126,11 +289,10 @@ const Viewport = forwardRef((props, ref) => {
       raycaster.setFromCamera(mouse, camera);
       const meshes = [];
       scene.traverse(obj => {
-        if (obj.isMesh && obj.userData.eagleId && obj !== selectionBox) meshes.push(obj);
+        if (obj.isMesh && obj.userData.eagleId && obj !== selectionBox && !obj.userData.isGizmo && !obj.userData.isHelper) meshes.push(obj);
       });
       const hits = raycaster.intersectObjects(meshes, true);
       if (hits.length > 0) {
-        // Walk up to find the root object with eagleId
         let hit = hits[0].object;
         while (hit && !hit.userData.eagleId) hit = hit.parent;
         if (hit?.userData?.eagleId) {
@@ -145,6 +307,8 @@ const Viewport = forwardRef((props, ref) => {
             const entry = objectMap.get(id);
             if (entry?.terrainManager) {
               entry.terrainManager.sculpt(worldPt, obj2.terrainTool || 'raise', obj2.brushSize || 5, obj2.brushStrength || 0.1);
+              // Sync height data back to store so play mode and save see it
+              updateSceneObject(id, { heightData: Array.from(entry.terrainManager.heightData) });
             }
           }
         }
@@ -166,31 +330,71 @@ const Viewport = forwardRef((props, ref) => {
     resizeObserver.observe(canvas.parentElement || canvas);
 
     // ---- Gizmo helpers ----
-    function buildTranslateGizmo() {
-      gizmoGroup.clear();
-      const selected = storeRef.current.selectedObjectId;
-      if (!selected || storeRef.current.editorMode !== 'translate') return;
-      const entry = objectMap.get(selected);
-      if (!entry) return;
-      const pos = entry.mesh.position.clone();
+    function buildTranslateGizmo(pos) {
       const arrowLen = 1.2;
-      const dirs = [
-        { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333 },
-        { dir: new THREE.Vector3(0, 1, 0), color: 0x33ff33 },
-        { dir: new THREE.Vector3(0, 0, 1), color: 0x3333ff },
+      const axes = [
+        { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x' },
+        { dir: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y' },
+        { dir: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z' },
       ];
-      dirs.forEach(({ dir, color }) => {
+      axes.forEach(({ dir, color, axis }) => {
         const points = [pos.clone(), pos.clone().addScaledVector(dir, arrowLen)];
         const geo = new THREE.BufferGeometry().setFromPoints(points);
         const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, linewidth: 2 }));
         line.userData.isGizmo = true;
         gizmoGroup.add(line);
-        const coneGeo = new THREE.ConeGeometry(0.06, 0.25, 8);
+        const coneGeo = new THREE.ConeGeometry(0.1, 0.3, 8);
         const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color }));
-        cone.position.copy(pos).addScaledVector(dir, arrowLen + 0.1);
+        cone.position.copy(pos).addScaledVector(dir, arrowLen + 0.15);
         cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         cone.userData.isGizmo = true;
+        cone.userData.gizmoAxis = axis;
+        cone.userData.gizmoType = 'translate';
         gizmoGroup.add(cone);
+      });
+    }
+
+    function buildRotateGizmo(pos) {
+      const radius = 1.1;
+      const axes = [
+        { normal: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x' },
+        { normal: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y' },
+        { normal: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z' },
+      ];
+      axes.forEach(({ normal, color, axis }) => {
+        const torusGeo = new THREE.TorusGeometry(radius, 0.04, 8, 36);
+        const torus = new THREE.Mesh(torusGeo, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+        torus.position.copy(pos);
+        // Orient the torus ring to face the correct axis
+        if (normal.x === 1) torus.rotation.y = Math.PI / 2;
+        else if (normal.z === 1) torus.rotation.x = Math.PI / 2;
+        torus.userData.isGizmo = true;
+        torus.userData.gizmoAxis = axis;
+        torus.userData.gizmoType = 'rotate';
+        gizmoGroup.add(torus);
+      });
+    }
+
+    function buildScaleGizmo(pos) {
+      const len = 1.2;
+      const axes = [
+        { dir: new THREE.Vector3(1, 0, 0), color: 0xff3333, axis: 'x' },
+        { dir: new THREE.Vector3(0, 1, 0), color: 0x33ff33, axis: 'y' },
+        { dir: new THREE.Vector3(0, 0, 1), color: 0x3333ff, axis: 'z' },
+      ];
+      axes.forEach(({ dir, color, axis }) => {
+        const points = [pos.clone(), pos.clone().addScaledVector(dir, len)];
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, linewidth: 2 }));
+        line.userData.isGizmo = true;
+        gizmoGroup.add(line);
+        const boxGeo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+        const box = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color }));
+        box.position.copy(pos).addScaledVector(dir, len + 0.09);
+        box.userData.isGizmo = true;
+        box.userData.gizmoAxis = axis;
+        box.userData.gizmoType = 'scale';
+        gizmoGroup.add(box);
       });
     }
 
@@ -208,10 +412,18 @@ const Viewport = forwardRef((props, ref) => {
       helper.userData.isHelper = true;
       scene.add(helper);
       selectionBox = helper;
-      buildTranslateGizmo();
+      // Build the correct gizmo based on current editor mode
+      const pos = entry.mesh.position.clone();
+      const mode = storeRef.current.editorMode;
+      if (mode === 'translate') buildTranslateGizmo(pos);
+      else if (mode === 'rotate') buildRotateGizmo(pos);
+      else if (mode === 'scale') buildScaleGizmo(pos);
     }
 
     // ---- Object creation ----
+    const gridTex2 = makeGridTexture();
+    gridTex2.repeat.set(1, 1);
+
     function createObjectMesh(type, id, name, options = {}) {
       const position = options.position || { x: 0, y: 0, z: 0 };
       const rotation = options.rotation || { x: 0, y: 0, z: 0 };
@@ -261,7 +473,9 @@ const Viewport = forwardRef((props, ref) => {
         case 'terrain': {
           const geo = new THREE.PlaneGeometry(100, 100, 64, 64);
           geo.rotateX(-Math.PI / 2);
-          const terrainMat = new THREE.MeshStandardMaterial({ color: 0x3d5a2a, wireframe: false, side: THREE.DoubleSide });
+          const terrainTex = makeGridTexture();
+          terrainTex.repeat.set(50, 50);
+          const terrainMat = new THREE.MeshStandardMaterial({ map: terrainTex, side: THREE.DoubleSide });
           mesh = new THREE.Mesh(geo, terrainMat);
           break;
         }
@@ -281,6 +495,23 @@ const Viewport = forwardRef((props, ref) => {
           mesh = new THREE.Mesh(geo, killMat);
           break;
         }
+        case 'aiBot': {
+          const group = new THREE.Group();
+          const bodyMesh = new THREE.Mesh(
+            new THREE.CapsuleGeometry(0.35, 1.2, 4, 8),
+            new THREE.MeshStandardMaterial({ color: 0xff6600 })
+          );
+          bodyMesh.position.y = 0.9;
+          const headMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(0.2, 8, 8),
+            new THREE.MeshStandardMaterial({ color: 0xffaa44 })
+          );
+          headMesh.position.y = 1.85;
+          group.add(bodyMesh);
+          group.add(headMesh);
+          mesh = group;
+          break;
+        }
         default:
           mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
       }
@@ -296,7 +527,6 @@ const Viewport = forwardRef((props, ref) => {
       scene.add(mesh);
 
       const entry = { mesh, type, id, name };
-      // Terrain manager
       if (type === 'terrain') {
         entry.terrainManager = {
           segments: 64,
@@ -362,11 +592,11 @@ const Viewport = forwardRef((props, ref) => {
       return entry;
     }
 
-    function disposeMesh(mesh) {
-      mesh.traverse(child => {
+    function disposeMesh(m) {
+      m.traverse(child => {
         if (child.geometry) child.geometry.dispose();
         if (child.material) {
-          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+          if (Array.isArray(child.material)) child.material.forEach(mat => mat.dispose());
           else child.material.dispose();
         }
       });
@@ -376,12 +606,20 @@ const Viewport = forwardRef((props, ref) => {
     const initialObjs = storeRef.current.sceneObjects;
     initialObjs.forEach(obj => {
       if (!objectMap.has(obj.id)) {
-        createObjectMesh(obj.type, obj.id, obj.name, {
+        const entry = createObjectMesh(obj.type, obj.id, obj.name, {
           position: obj.position,
           rotation: obj.rotation,
           scale: obj.scale,
           color: obj.material?.color || obj.color || '#888888',
         });
+        // Restore terrain height data if present
+        if (obj.heightData && entry.terrainManager) {
+          entry.terrainManager.heightData = new Float32Array(obj.heightData);
+          const pos = entry.mesh.geometry.attributes.position;
+          entry.terrainManager.heightData.forEach((hv, i) => pos.setY(i, hv));
+          pos.needsUpdate = true;
+          entry.mesh.geometry.computeVertexNormals();
+        }
       }
     });
 
@@ -392,27 +630,32 @@ const Viewport = forwardRef((props, ref) => {
     function animate() {
       animId = requestAnimationFrame(animate);
       const { selectedObjectId: sel, editorMode: mode } = storeRef.current;
-      // Refresh selection box if selected or mode changed
+      // Refresh gizmos if selection or mode changed
       if (sel !== lastSelectedId || mode !== lastEditorMode) {
         lastSelectedId = sel;
         lastEditorMode = mode;
         if (sel) selectMesh(sel);
         else clearSelection();
       }
-      // Update selection box position (in case mesh moved)
+      // Update selection box position (in case mesh moved via gizmo)
       if (selectionBox && sel) {
         const entry = objectMap.get(sel);
         if (entry) {
           const box3 = new THREE.Box3().setFromObject(entry.mesh);
           if (selectionBox.box) selectionBox.box.copy(box3);
+          // Keep gizmo group anchored to object
+          gizmoGroup.traverse(child => {
+            if (child.userData.gizmoType) {
+              // gizmos will be rebuilt on next selection change
+            }
+          });
         }
       }
       renderer.render(scene, camera);
     }
     animate();
 
-    // Store state in ref for imperative methods
-    stateRef.current = { scene, camera, renderer, objectMap, gizmoGroup, createObjectMesh, disposeMesh, selectMesh, clearSelection };
+    stateRef.current = { scene, camera, renderer, objectMap, gizmoGroup, createObjectMesh, disposeMesh, selectMesh, clearSelection, ambient, sunLight };
 
     return () => {
       cancelAnimationFrame(animId);
@@ -423,9 +666,10 @@ const Viewport = forwardRef((props, ref) => {
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('contextmenu', onContextMenu);
       canvas.removeEventListener('click', onClick);
-      // Dispose all
       objectMap.forEach(entry => { scene.remove(entry.mesh); disposeMesh(entry.mesh); });
       objectMap.clear();
+      gridTex.dispose();
+      gridTex2.dispose();
       renderer.dispose();
     };
   }, []); // run once on mount
@@ -517,7 +761,10 @@ const Viewport = forwardRef((props, ref) => {
       const { objectMap } = stateRef.current;
       if (!objectMap) return;
       const entry = objectMap.get(id);
-      if (entry?.terrainManager) entry.terrainManager.importHeightmap(imageData);
+      if (entry?.terrainManager) {
+        entry.terrainManager.importHeightmap(imageData);
+        updateSceneObject(id, { heightData: Array.from(entry.terrainManager.heightData) });
+      }
     },
     getSceneJSON() {
       const { objectMap } = stateRef.current;
@@ -541,6 +788,14 @@ const Viewport = forwardRef((props, ref) => {
         if (entry.terrainManager) {
           obj.heightData = Array.from(entry.terrainManager.heightData);
         }
+        // Preserve extra metadata from store
+        const storeObj = storeRef.current.sceneObjects.find(o => o.id === id);
+        if (storeObj) {
+          ['tags', 'lightProps', 'terrainTool', 'brushSize', 'brushStrength',
+           'spawnIndex', 'deathMessage', 'aiType', 'patrolRadius', 'detectRadius', 'attackDamage'].forEach(k => {
+            if (storeObj[k] !== undefined) obj[k] = storeObj[k];
+          });
+        }
         objs.push(obj);
       });
       return { objects: objs };
@@ -548,26 +803,22 @@ const Viewport = forwardRef((props, ref) => {
     loadSceneJSON(data) {
       const { scene, objectMap, disposeMesh, createObjectMesh } = stateRef.current;
       if (!objectMap || !createObjectMesh) return;
-      // Clear existing
       objectMap.forEach((entry) => { scene.remove(entry.mesh); disposeMesh(entry.mesh); });
       objectMap.clear();
       const objs = data.objects || [];
       objs.forEach(obj => {
-        createObjectMesh(obj.type, obj.id, obj.name, {
+        const entry = createObjectMesh(obj.type, obj.id, obj.name, {
           position: obj.position,
           rotation: obj.rotation,
           scale: obj.scale,
           color: obj.material?.color || '#888888',
         });
-        if (obj.heightData) {
-          const entry = objectMap.get(obj.id);
-          if (entry?.terrainManager) {
-            entry.terrainManager.heightData = new Float32Array(obj.heightData);
-            const pos = entry.mesh.geometry.attributes.position;
-            entry.terrainManager.heightData.forEach((h, i) => pos.setY(i, h));
-            pos.needsUpdate = true;
-            entry.mesh.geometry.computeVertexNormals();
-          }
+        if (obj.heightData && entry.terrainManager) {
+          entry.terrainManager.heightData = new Float32Array(obj.heightData);
+          const pos = entry.mesh.geometry.attributes.position;
+          entry.terrainManager.heightData.forEach((hv, i) => pos.setY(i, hv));
+          pos.needsUpdate = true;
+          entry.mesh.geometry.computeVertexNormals();
         }
       });
     },
@@ -585,7 +836,6 @@ const Viewport = forwardRef((props, ref) => {
     applySettings(settings) {
       const { renderer, scene } = stateRef.current;
       if (!renderer) return;
-      // Shadow quality
       if (settings.shadowQuality !== undefined || settings.shadowsEnabled !== undefined) {
         const quality = settings.shadowQuality ?? storeRef.current.settings.shadowQuality;
         const enabled = settings.shadowsEnabled !== undefined ? settings.shadowsEnabled : storeRef.current.settings.shadowsEnabled;
@@ -599,18 +849,27 @@ const Viewport = forwardRef((props, ref) => {
         }
         renderer.shadowMap.needsUpdate = true;
       }
-      // Render distance / fog
       if (settings.renderDistance !== undefined && scene.fog) {
         scene.fog.near = settings.renderDistance * 0.5;
         scene.fog.far = settings.renderDistance;
       }
-      // Pixel ratio based on texture quality
       if (settings.textureQuality !== undefined) {
         const base = Math.min(window.devicePixelRatio, 2);
         if (settings.textureQuality === 'low') renderer.setPixelRatio(Math.min(base, 0.75));
         else if (settings.textureQuality === 'medium') renderer.setPixelRatio(Math.min(base, 1));
         else renderer.setPixelRatio(base);
       }
+    },
+    applyGlobalLighting(lighting) {
+      const { ambient, sunLight } = stateRef.current;
+      if (!ambient || !sunLight) return;
+      if (lighting.ambientColor) ambient.color.set(lighting.ambientColor);
+      if (lighting.ambientIntensity !== undefined) ambient.intensity = lighting.ambientIntensity;
+      if (lighting.sunColor) sunLight.color.set(lighting.sunColor);
+      if (lighting.sunIntensity !== undefined) sunLight.intensity = lighting.sunIntensity;
+      if (lighting.sunX !== undefined) sunLight.position.x = lighting.sunX;
+      if (lighting.sunY !== undefined) sunLight.position.y = lighting.sunY;
+      if (lighting.sunZ !== undefined) sunLight.position.z = lighting.sunZ;
     },
   }));
 
@@ -619,7 +878,7 @@ const Viewport = forwardRef((props, ref) => {
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
       <div className="viewport-overlay">
         <div className="viewport-hint">RMB: Orbit · MMB: Pan · Scroll: Zoom</div>
-        <div className="viewport-hint">Click: Select · Double-click hierarchy: Rename</div>
+        <div className="viewport-hint">Click: Select · Drag axis handle: Transform</div>
       </div>
     </div>
   );

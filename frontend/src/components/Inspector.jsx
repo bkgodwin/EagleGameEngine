@@ -87,6 +87,7 @@ export default function Inspector({ viewportRef }) {
   const isTerrain = obj.type === 'terrain';
   const isSpawn = obj.type === 'spawnPoint';
   const isKill = obj.type === 'killVolume';
+  const isAiBot = obj.type === 'aiBot';
 
   const mat = obj.material || {};
   const lightProps = obj.lightProps || { color: '#ffffff', intensity: 1, range: 20, angle: 30, castShadow: false };
@@ -368,6 +369,56 @@ export default function Inspector({ viewportRef }) {
                 type="text"
                 value={obj.deathMessage || 'You were killed!'}
                 onChange={e => updateSceneObject(obj.id, { deathMessage: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Bot */}
+      {isAiBot && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">🤖 AI Bot</div>
+          <div className="field-group">
+            <div className="field-row">
+              <span className="field-label">Type</span>
+              <select
+                value={obj.aiType || 'zombie'}
+                onChange={e => updateSceneObject(obj.id, { aiType: e.target.value })}
+                style={{ flex: 1 }}
+              >
+                <option value="zombie">Zombie</option>
+                <option value="soldier">Soldier</option>
+              </select>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Patrol R.</span>
+              <input
+                type="number"
+                value={obj.patrolRadius ?? 10}
+                onChange={e => updateSceneObject(obj.id, { patrolRadius: parseFloat(e.target.value) || 10 })}
+                step="1" min="1"
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Detect R.</span>
+              <input
+                type="number"
+                value={obj.detectRadius ?? 15}
+                onChange={e => updateSceneObject(obj.id, { detectRadius: parseFloat(e.target.value) || 15 })}
+                step="1" min="1"
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Damage</span>
+              <input
+                type="number"
+                value={obj.attackDamage ?? 10}
+                onChange={e => updateSceneObject(obj.id, { attackDamage: parseInt(e.target.value) || 10 })}
+                step="1" min="0"
                 style={{ flex: 1 }}
               />
             </div>
