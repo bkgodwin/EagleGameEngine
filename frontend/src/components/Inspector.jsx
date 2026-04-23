@@ -278,6 +278,20 @@ export default function Inspector({ viewportRef }) {
                 style={{ width: 'auto', padding: 0 }}
               />
             </div>
+            <div className="field-row">
+              <span className="field-label">Mass (kg)</span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.1"
+                value={obj.mass != null ? obj.mass : 1}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  if (!isNaN(v) && v > 0) updateSceneObject(obj.id, { mass: v });
+                }}
+                style={{ width: '80px' }}
+              />
+            </div>
           </div>
         </div>
       )}

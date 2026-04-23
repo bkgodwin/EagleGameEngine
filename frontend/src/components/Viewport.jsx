@@ -169,6 +169,7 @@ const Viewport = forwardRef((props, ref) => {
 
     // ---- Gizmo drag state ----
     let draggingGizmo = null; // { axis, type, objInitPos, objInitRot, objInitScale, startX, startY }
+    let suppressNextClick = false; // prevent selection change after gizmo drag
 
     function updateCamera() {
       camera.position.x = target.x + spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta);
@@ -232,7 +233,7 @@ const Viewport = forwardRef((props, ref) => {
         });
       } else if (type === 'rotate') {
         const sensitivity = 0.015;
-        let delta = axis === 'y' ? totalDx * sensitivity : axis === 'x' ? totalDy * sensitivity : totalDx * sensitivity;
+        let delta = axis === 'y' ? totalDx * sensitivity : axis === 'x' ? totalDy * sensitivity : -totalDy * sensitivity;
         if (snap.enabled) {
           const stepRad = (snap.rotate * Math.PI) / 180;
           delta = snapValue(delta, stepRad);
@@ -310,6 +311,7 @@ const Viewport = forwardRef((props, ref) => {
                 child.material.color.setHex(0xffff00);
               }
             });
+            suppressNextClick = true;
           }
           e.preventDefault();
           return;
@@ -420,6 +422,8 @@ const Viewport = forwardRef((props, ref) => {
     // ---- Click selection (with ctrl+click multi-select) ----
     const onClick = (e) => {
       if (e.button !== 0) return;
+      // Suppress selection change if a gizmo drag just ended
+      if (suppressNextClick) { suppressNextClick = false; return; }
       // If we just dragged terrain, don't re-select
       const rect = canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
@@ -529,8 +533,9 @@ const Viewport = forwardRef((props, ref) => {
         const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
         const torus = new THREE.Mesh(torusGeo, mat);
         // Orient the torus ring to face the correct axis
-        if (normal.x === 1) torus.rotation.y = Math.PI / 2;
-        else if (normal.z === 1) torus.rotation.x = Math.PI / 2;
+        if (normal.x === 1) torus.rotation.y = Math.PI / 2;  // X ring: YZ plane
+        else if (normal.y === 1) torus.rotation.x = Math.PI / 2;  // Y ring: XZ plane
+        // Z ring: default XY plane, no rotation needed
         torus.userData.isGizmo = true;
         torus.userData.gizmoAxis = axis;
         torus.userData.gizmoType = 'rotate';

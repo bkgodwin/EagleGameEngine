@@ -141,10 +141,13 @@ export default function PlayMode({ navigate }) {
     // Terrain-textured floor
     const floorTex = makeTerrainTexture();
     floorTex.repeat.set(50, 50);
+    floorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    floorTex.needsUpdate = true;
     const floorGeo = new THREE.PlaneGeometry(200, 200);
     const floorMat = new THREE.MeshStandardMaterial({ map: floorTex });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.005; // slight offset to prevent z-fighting with terrain objects
     floor.receiveShadow = true;
     scene.add(floor);
 
@@ -198,6 +201,8 @@ export default function PlayMode({ navigate }) {
           }
           const terrainTex = makeTerrainTexture();
           terrainTex.repeat.set(20, 20);
+          terrainTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          terrainTex.needsUpdate = true;
           mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: terrainTex }));
           break;
         }
@@ -229,7 +234,8 @@ export default function PlayMode({ navigate }) {
     // Add physics bodies for objects with simulatePhysics enabled
     scenePhysicsBodies.forEach(({ obj, mesh }) => {
       const shape = obj.type === 'sphere' ? 'sphere' : 'box';
-      physics.addBody(obj.id, mesh, { type: obj.enableCollision === false ? 'kinematic' : 'dynamic', mass: 1, shape });
+      const mass = obj.mass != null ? obj.mass : 1;
+      physics.addBody(obj.id, mesh, { type: obj.enableCollision === false ? 'kinematic' : 'dynamic', mass, shape });
     });
 
     // Input
@@ -371,13 +377,25 @@ export default function PlayMode({ navigate }) {
     let aiPollTimer = null;
     // AI target positions for smooth interpolation
     const aiTargetPositions = new Map(); // agent_id → {x,y,z}
+    const dyingBots = new Map(); // agent_id → { mesh, elapsed }
 
     async function pollAI() {
       const agents = await fetchAIAgents(roomId);
       agents.forEach(agent => {
         if (agent.state === 'dead') {
           const m = aiMeshes.get(agent.agent_id);
-          if (m) { scene.remove(m); aiMeshes.delete(agent.agent_id); }
+          if (m && !dyingBots.has(agent.agent_id)) {
+            // Turn red
+            m.traverse(child => {
+              if (child.isMesh) {
+                child.material = child.material.clone();
+                child.material.color.set(0xff0000);
+                child.material.transparent = true;
+              }
+            });
+            aiMeshes.delete(agent.agent_id);
+            dyingBots.set(agent.agent_id, { mesh: m, elapsed: 0 });
+          }
           aiTargetPositions.delete(agent.agent_id);
           return;
         }
@@ -440,8 +458,10 @@ export default function PlayMode({ navigate }) {
         let hit = false;
         aiMeshes.forEach((aiMesh, agentId) => {
           if (p.hitIds.has(agentId)) return;
-          const dist = p.mesh.position.distanceTo(aiMesh.position);
-          if (dist < 1.0) {
+          // Check against the body center (capsule body is at y+0.9 from group)
+          const botCenter = aiMesh.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+          const dist = p.mesh.position.distanceTo(botCenter);
+          if (dist < 1.2) {
             p.hitIds.add(agentId);
             hit = true;
             setHitMarker(true);
@@ -452,6 +472,19 @@ export default function PlayMode({ navigate }) {
               headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
               body: JSON.stringify({ amount: weaponDamage }),
             }).catch(() => {});
+          }
+        });
+        // Check if projectile hits physics-enabled scene objects and apply impulse
+        scenePhysicsBodies.forEach(({ obj, mesh }) => {
+          if (p.hitIds.has(obj.id)) return;
+          const dist = p.mesh.position.distanceTo(mesh.position);
+          const hitRadius = Math.max(0.6, (obj.scale?.x || 1) * 0.6);
+          if (dist < hitRadius) {
+            p.hitIds.add(obj.id);
+            hit = true;
+            const impulseMag = 8 / Math.max(0.1, obj.mass || 1);
+            const iv = p.velocity.clone().normalize().multiplyScalar(impulseMag);
+            physics.applyImpulse(obj.id, iv.x, iv.y, iv.z);
           }
         });
         // Check if projectile hits remote players
@@ -626,6 +659,20 @@ export default function PlayMode({ navigate }) {
         }
       });
 
+      // Animate dying bots (sink through floor + fade out)
+      dyingBots.forEach((dying, agentId) => {
+        dying.elapsed += dt;
+        dying.mesh.position.y -= dt * 1.5; // sink through floor
+        const opacity = Math.max(0, 1 - dying.elapsed / 1.5);
+        dying.mesh.traverse(child => {
+          if (child.isMesh) child.material.opacity = opacity;
+        });
+        if (dying.elapsed >= 1.5) {
+          scene.remove(dying.mesh);
+          dyingBots.delete(agentId);
+        }
+      });
+
       // Interpolate remote players
       remotePlayerMeshes.forEach(entry => {
         const tp = entry.targetPos;
@@ -670,6 +717,8 @@ export default function PlayMode({ navigate }) {
       clearInterval(aiPollTimer);
       // Clean up remaining projectiles
       projectiles.forEach(p => { scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); });
+      // Clean up dying bots
+      dyingBots.forEach(dying => { scene.remove(dying.mesh); });
       setOnlineCount(0);
       canvas.removeEventListener('click', requestLock);
       document.removeEventListener('mousedown', onMouseDown);

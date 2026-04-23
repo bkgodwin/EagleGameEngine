@@ -26,6 +26,7 @@ export class PlayerController {
     this.pitch=Math.max(-Math.PI/2+0.01,Math.min(Math.PI/2-0.01,this.pitch));
     this.camera.quaternion.setFromEuler(new THREE.Euler(this.pitch,this.yaw,0,'YXZ'));
     if(!this.body)return;
+    if(this.body.sleepState===2)this.body.wakeUp();
     // Decay grounded state
     if(this._groundedFrames>0){this._groundedFrames--;if(this._groundedFrames===0)this.isGrounded=false;}
     const isCrouching=this.input.isKeyDown('ControlLeft')||this.input.isKeyDown('ControlRight')||this.input.isKeyDown('Control');
