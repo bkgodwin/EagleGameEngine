@@ -1,0 +1,115 @@
+:root {
+  --bg-dark: #1a1a2e;
+  --bg-panel: #16213e;
+  --color-primary: #e63946;
+  --color-secondary: #457b9d;
+  --color-accent: #f1faee;
+  --border-color: #0f3460;
+  --text-muted: #a8dadc;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  background: var(--bg-dark);
+  color: var(--color-accent);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-secondary);
+}
+
+/* Base button */
+.btn {
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: opacity 0.15s, background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+.btn-secondary {
+  background: var(--color-secondary);
+  color: #fff;
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--color-accent);
+  border: 1px solid var(--border-color);
+}
+.btn-ghost:hover {
+  background: rgba(255,255,255,0.06);
+}
+.btn-danger {
+  background: #c62828;
+  color: #fff;
+}
+
+input, select, textarea {
+  background: #0f3460;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--color-accent);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-secondary);
+}
+
+select option {
+  background: var(--bg-panel);
+  color: var(--color-accent);
+}
+
+a {
+  color: var(--color-secondary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
