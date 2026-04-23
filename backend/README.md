@@ -55,21 +55,24 @@ Full interactive docs: http://localhost:8000/docs
 
 ```
 backend/
-├── main.py           # FastAPI app, CORS, lifespan (DB init + admin seed)
-├── database.py       # Async SQLite via SQLAlchemy 2.x
-├── models.py         # ORM models (User, Project, Asset) + Pydantic schemas
-├── auth.py           # JWT helpers, bcrypt, FastAPI dependencies
+├── requirements.txt
 ├── settings.json     # Persisted global settings (created on first run)
 ├── eagle.db          # SQLite database (created on first run)
 ├── uploads/          # User-uploaded asset files
-├── routers/
-│   ├── auth_router.py   # /api/auth/*
-│   ├── projects.py      # /api/projects/*
-│   ├── assets.py        # /api/assets/*
-│   ├── admin.py         # /api/admin/*
-│   └── multiplayer.py   # /api/multiplayer/ws/{room_id}
-└── ai/
-    └── agents.py        # FSM AI agents + /api/rooms/{id}/ai/*
+└── backend/          # Python package (import root for uvicorn)
+    ├── __init__.py
+    ├── main.py           # FastAPI app, CORS, lifespan (DB init + admin seed)
+    ├── database.py       # Async SQLite via SQLAlchemy 2.x
+    ├── models.py         # ORM models (User, Project, Asset) + Pydantic schemas
+    ├── auth.py           # JWT helpers, bcrypt, FastAPI dependencies
+    ├── routers/
+    │   ├── auth_router.py   # /api/auth/*
+    │   ├── projects.py      # /api/projects/*
+    │   ├── assets.py        # /api/assets/*
+    │   ├── admin.py         # /api/admin/*
+    │   └── multiplayer.py   # /api/multiplayer/ws/{room_id}
+    └── ai/
+        └── agents.py        # FSM AI agents + /api/rooms/{id}/ai/*
 ```
 
 ## WebSocket Protocol

@@ -17,7 +17,7 @@ from ..routers.auth_router import set_registration_open
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
+SETTINGS_FILE = Path(__file__).resolve().parent.parent.parent / "settings.json"
 
 DEFAULT_SETTINGS = {
     "registration_open": True,
