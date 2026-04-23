@@ -252,7 +252,7 @@ const Viewport = forwardRef((props, ref) => {
         const ndx = (totalDx / canvas.clientWidth) * 2;
         const ndy = -(totalDy / canvas.clientHeight) * 2;
         const dot = ndx * (sdx / sLen) + ndy * (sdy / sLen);
-        let delta = dot * spherical.radius * 0.5;
+        let delta = dot * spherical.radius * 0.35;
         if (snap.enabled) delta = snapValue(delta, snap.scale);
         const ns = objInitScale.clone();
         if (axis === 'x') ns.x = Math.max(0.01, objInitScale.x + delta);
