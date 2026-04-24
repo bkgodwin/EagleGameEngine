@@ -70,6 +70,8 @@ export const useStore = create((set) => ({
     aiAttackDamage: 10,
     aiHealth: 100,
     maxPlayers: 8,
+    walkSpeed: 12,
+    sprintSpeed: 24,
   },
   updateProjectSettings: (updates) => set((s) => ({ projectSettings: { ...s.projectSettings, ...updates } })),
 

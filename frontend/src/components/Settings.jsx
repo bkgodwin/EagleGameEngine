@@ -175,6 +175,20 @@ export default function Settings({ onClose, viewportRef }) {
 
         {activeTab === 'game' && (
           <>
+            {field('Walk Speed',
+              <>
+                <input type="number" value={localProject.walkSpeed ?? 12} step="1" min="1" max="50"
+                  onChange={e => setLocalProject(l => ({ ...l, walkSpeed: parseFloat(e.target.value) || 12 }))} style={{ flex: 1 }} />
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>u/s</span>
+              </>
+            )}
+            {field('Sprint Speed',
+              <>
+                <input type="number" value={localProject.sprintSpeed ?? 24} step="1" min="1" max="100"
+                  onChange={e => setLocalProject(l => ({ ...l, sprintSpeed: parseFloat(e.target.value) || 24 }))} style={{ flex: 1 }} />
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>u/s</span>
+              </>
+            )}
             {field('PVP Damage',
               <input type="checkbox" checked={localProject.pvpDamage}
                 onChange={e => setLocalProject(l => ({ ...l, pvpDamage: e.target.checked }))} style={{ width: 'auto' }} />

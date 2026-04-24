@@ -89,9 +89,10 @@ export default function Inspector({ viewportRef }) {
   const isSpawn = obj.type === 'spawnPoint';
   const isKill = obj.type === 'killVolume';
   const isAiBot = obj.type === 'aiBot';
+  const isGroup = obj.type === 'group';
 
   const mat = obj.material || {};
-  const lightProps = obj.lightProps || { color: '#ffffff', intensity: 1, range: 20, angle: 30, castShadow: false };
+  const lightProps = obj.lightProps || { color: '#ffffff', intensity: 5, range: 500, angle: 30, castShadow: false };
 
   return (
     <div className="inspector">
@@ -314,21 +315,21 @@ export default function Inspector({ viewportRef }) {
               <span className="field-label">Intensity</span>
               <input
                 type="range"
-                min="0" max="10" step="0.1"
-                value={lightProps.intensity ?? 1}
+                min="0" max="50" step="0.5"
+                value={lightProps.intensity ?? 5}
                 onChange={e => updateLight({ intensity: parseFloat(e.target.value) })}
                 style={{ flex: 1 }}
               />
-              <span style={{ fontSize: '11px', width: '28px', textAlign: 'right' }}>{(lightProps.intensity ?? 1).toFixed(1)}</span>
+              <span style={{ fontSize: '11px', width: '28px', textAlign: 'right' }}>{(lightProps.intensity ?? 5).toFixed(1)}</span>
             </div>
             {(obj.type === 'pointLight' || obj.type === 'spotlight') && (
               <div className="field-row">
-                <span className="field-label">Range</span>
+                <span className="field-label">Attenuation Dist.</span>
                 <input
                   type="number"
-                  value={lightProps.range ?? 20}
+                  value={lightProps.range ?? 500}
                   onChange={e => updateLight({ range: parseFloat(e.target.value) })}
-                  step="1" min="0"
+                  step="10" min="0"
                   style={{ flex: 1 }}
                 />
               </div>
@@ -450,15 +451,61 @@ export default function Inspector({ viewportRef }) {
           <div className="inspector-section-title">🚩 Spawn Point</div>
           <div className="field-group">
             <div className="field-row">
-              <span className="field-label">Index</span>
+              <span className="field-label">AI Spawn</span>
               <input
-                type="number"
-                value={obj.spawnIndex ?? 0}
-                onChange={e => updateSceneObject(obj.id, { spawnIndex: parseInt(e.target.value) || 0 })}
-                min="0"
-                style={{ flex: 1 }}
+                type="checkbox"
+                checked={!!obj.isAiSpawn}
+                onChange={e => updateSceneObject(obj.id, { isAiSpawn: e.target.checked })}
+                style={{ width: 'auto', padding: 0 }}
               />
             </div>
+            {!obj.isAiSpawn && (
+              <div className="field-row">
+                <span className="field-label">Index</span>
+                <input
+                  type="number"
+                  value={obj.spawnIndex ?? 0}
+                  onChange={e => updateSceneObject(obj.id, { spawnIndex: parseInt(e.target.value) || 0 })}
+                  min="0"
+                  style={{ flex: 1 }}
+                />
+              </div>
+            )}
+            {obj.isAiSpawn && (
+              <>
+                <div className="field-row">
+                  <span className="field-label">AI Type</span>
+                  <select
+                    value={obj.aiSpawnType || 'zombie'}
+                    onChange={e => updateSceneObject(obj.id, { aiSpawnType: e.target.value })}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="zombie">Zombie</option>
+                    <option value="soldier">Soldier</option>
+                  </select>
+                </div>
+                <div className="field-row">
+                  <span className="field-label">Max Enemies</span>
+                  <input
+                    type="number"
+                    value={obj.aiSpawnMaxEnemies ?? 3}
+                    onChange={e => updateSceneObject(obj.id, { aiSpawnMaxEnemies: Math.min(10, Math.max(1, parseInt(e.target.value) || 1)) })}
+                    min="1" max="10"
+                    style={{ flex: 1 }}
+                  />
+                </div>
+                <div className="field-row">
+                  <span className="field-label">Spawn Rate (s)</span>
+                  <input
+                    type="number"
+                    value={obj.aiSpawnRate ?? 5}
+                    onChange={e => updateSceneObject(obj.id, { aiSpawnRate: Math.max(1, parseFloat(e.target.value) || 5) })}
+                    min="1" step="0.5"
+                    style={{ flex: 1 }}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -537,6 +584,30 @@ export default function Inspector({ viewportRef }) {
                 style={{ flex: 1 }}
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Group */}
+      {isGroup && (
+        <div className="inspector-section">
+          <div className="inspector-section-title">🗂️ Group</div>
+          <div className="field-group">
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+              {(obj.childIds || []).length} children
+            </div>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '12px', width: '100%' }}
+              onClick={() => {
+                // Ungroup: remove groupId from all children, remove this group object
+                (obj.childIds || []).forEach(cid => updateSceneObject(cid, { groupId: undefined }));
+                updateSceneObject(obj.id, { _delete: true });
+                if (viewportRef?.current?.removeObject) viewportRef.current.removeObject(obj.id);
+              }}
+            >
+              📤 Ungroup
+            </button>
           </div>
         </div>
       )}
