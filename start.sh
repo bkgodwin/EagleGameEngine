@@ -3,10 +3,23 @@
 # Run from the repo root:  bash start.sh
 # Press Ctrl+C to stop everything.
 
-set -e
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 trap 'echo; echo "Stopping Eagle Game Engine..."; kill 0' SIGINT SIGTERM
+
+# ── Free ports if already in use ─────────────────────────────────────────────
+free_port() {
+  local port=$1
+  local pids
+  pids=$(lsof -ti tcp:"${port}" 2>/dev/null) || true
+  if [ -n "$pids" ]; then
+    echo "Port ${port} is already in use – stopping existing process(es)..."
+    echo "$pids" | xargs kill -TERM 2>/dev/null || true
+    sleep 1
+  fi
+}
+free_port 8000
+free_port 5173
 
 # ── Detect LAN IP ────────────────────────────────────────────────────────────
 # Try to get the primary outbound interface IP; fall back to hostname -I
