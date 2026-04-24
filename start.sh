@@ -14,8 +14,19 @@ free_port() {
   pids=$(lsof -ti tcp:"${port}" 2>/dev/null) || true
   if [ -n "$pids" ]; then
     echo "Port ${port} is already in use – stopping existing process(es)..."
-    echo "$pids" | xargs kill -TERM 2>/dev/null || true
-    sleep 1
+    if ! echo "$pids" | xargs kill -TERM 2>/dev/null; then
+      echo "  Warning: could not stop all process(es) on port ${port} (permission denied?)"
+    fi
+    # Wait up to 5 seconds for the port to be released
+    local waited=0
+    while lsof -ti tcp:"${port}" >/dev/null 2>&1; do
+      if [ "$waited" -ge 5 ]; then
+        echo "  Warning: port ${port} still in use after ${waited}s – proceeding anyway"
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
   fi
 }
 free_port 8000
