@@ -69,7 +69,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS – allow the Vite dev server and all LAN origins
+# CORS – open for LAN use; restrict origins in production if needed
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

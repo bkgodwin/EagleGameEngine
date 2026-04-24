@@ -9,7 +9,11 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 trap 'echo; echo "Stopping Eagle Game Engine..."; kill 0' SIGINT SIGTERM
 
 # ── Detect LAN IP ────────────────────────────────────────────────────────────
-LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+# Try to get the primary outbound interface IP; fall back to hostname -I
+LAN_IP=$(ip route get 1 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+if [ -z "$LAN_IP" ]; then
+  LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
 [ -z "$LAN_IP" ] && LAN_IP="localhost"
 
 # ── Python / venv setup ──────────────────────────────────────────────────────

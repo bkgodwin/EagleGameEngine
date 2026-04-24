@@ -212,12 +212,6 @@ def get_manager(room_id: str, rooms_ref: dict | None = None) -> AIManager:
         mgr = AIManager(room_id)
         _managers[room_id] = mgr
         asyncio.create_task(mgr.start(rooms_ref=rooms_ref if rooms_ref is not None else {}))
-    else:
-        # Update the running manager's rooms reference if it has a live task
-        mgr = _managers[room_id]
-        if rooms_ref is not None and mgr._task and not mgr._task.done():
-            # Re-start with updated rooms_ref if not already running with a live ref
-            pass  # The loop uses the dict by reference, so if it was the right dict it auto-updates
     return _managers[room_id]
 
 

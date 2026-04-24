@@ -289,8 +289,9 @@ export default function PlayMode({ navigate }) {
       const scl = obj.scale || { x: 1, y: 1, z: 1 };
       const pos = obj.position || { x: 0, y: 0, z: 0 };
       if (obj.type === 'terrain') {
-        // Approximate terrain with a large flat static box (average height 0)
-        // A precise heightfield would require cannon-es Heightfield shape
+        // Approximate terrain with a large static box.
+        // The Y offset of -0.25 matches the 0.25 half-height of the box so its
+        // top face sits at the terrain's world-space Y origin.
         const hw = 50 * scl.x;
         const hd = 50 * scl.z;
         physics.addStaticBox('static_' + obj.id, { x: pos.x, y: pos.y - 0.25, z: pos.z }, { x: hw, y: 0.25, z: hd });
