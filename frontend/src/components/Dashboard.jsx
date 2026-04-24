@@ -305,8 +305,13 @@ export default function Dashboard({ navigate }) {
                       disabled={room.player_count >= room.max_players}
                       title={room.player_count >= room.max_players ? 'Server full' : 'Join server'}
                       onClick={() => {
-                        // Joining a server: just notify user they need to open a project with same room ID
-                        alert(`To join, open a project and make sure you're using room: ${room.room_id}`);
+                        // Store the target room and switch straight to play mode.
+                        // PlayMode will use this override instead of project_<id>.
+                        const store = useStore.getState();
+                        store.setJoinRoomId(room.room_id);
+                        store.setIsPlaying(true);
+                        setShowServerBrowser(false);
+                        navigate('editor');
                       }}
                     >
                       {room.player_count >= room.max_players ? 'Full' : 'Join'}
