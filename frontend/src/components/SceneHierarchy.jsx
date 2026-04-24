@@ -151,7 +151,7 @@ export default function SceneHierarchy({ viewportRef }) {
               style={{ fontSize: '10px', padding: '2px 8px', flex: 1 }}
               title="Group selected objects"
               onClick={() => {
-                const { addSceneObject, updateSceneObject: _uc } = useStore.getState();
+                const { addSceneObject } = useStore.getState();
                 const groupId = 'group_' + Date.now();
                 const groupName = 'Group ' + (sceneObjects.filter(o => o.type === 'group').length + 1);
                 // Compute average position
