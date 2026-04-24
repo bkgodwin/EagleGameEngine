@@ -93,6 +93,7 @@ export default function PlayMode({ navigate }) {
   const [health, setHealth] = useState(100);
   const [playerCount, setPlayerCount] = useState(1);
   const [killMessage, setKillMessage] = useState('');
+  const [deathMessage, setDeathMessage] = useState('');
   const [chatMessages, setChatMessages] = useState([]);
   const [shootFlash, setShootFlash] = useState(false);
   const [hitMarker, setHitMarker] = useState(false);
@@ -165,12 +166,25 @@ export default function PlayMode({ navigate }) {
     const killVolumes = [];
     let spawnPos = new THREE.Vector3(0, 2, 0);
     const aiBotSpawns = [];
-    const scenePhysicsBodies = []; // { body, mesh } for dynamic objects
+    const aiSpawnPoints = [];  // AI spawn point objects
+    const scenePhysicsBodies = []; // { obj, mesh } for dynamic objects
+    const staticCollisionMeshes = []; // planes, terrain for static physics
 
     sceneObjects.forEach(obj => {
       if (obj.type === 'spawnPoint') {
-        const idx = obj.spawnIndex || 0;
-        if (idx === 0) spawnPos.set(obj.position?.x || 0, (obj.position?.y || 0) + 1, obj.position?.z || 0);
+        if (obj.isAiSpawn) {
+          // AI spawn point
+          aiSpawnPoints.push({
+            id: obj.id,
+            position: obj.position || { x: 0, y: 0, z: 0 },
+            maxEnemies: Math.min(10, Math.max(1, obj.aiSpawnMaxEnemies ?? 3)),
+            spawnRate: Math.max(1, obj.aiSpawnRate ?? 5),
+            aiType: obj.aiSpawnType || 'zombie',
+          });
+        } else {
+          const idx = obj.spawnIndex || 0;
+          if (idx === 0) spawnPos.set(obj.position?.x || 0, (obj.position?.y || 0) + 1, obj.position?.z || 0);
+        }
         return;
       }
       if (obj.type === 'killVolume') {
@@ -199,7 +213,12 @@ export default function PlayMode({ navigate }) {
       switch (obj.type) {
         case 'cube': mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat); break;
         case 'sphere': mesh = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), mat); break;
-        case 'plane': mesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshStandardMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide })); mesh.rotation.x = -Math.PI / 2; break;
+        case 'plane': {
+          mesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshStandardMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide }));
+          mesh.rotation.x = -Math.PI / 2;
+          staticCollisionMeshes.push({ obj, mesh, type: 'plane' });
+          break;
+        }
         case 'terrain': {
           const geo = new THREE.PlaneGeometry(100, 100, 64, 64);
           geo.rotateX(-Math.PI / 2);
@@ -214,10 +233,35 @@ export default function PlayMode({ navigate }) {
           terrainTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
           terrainTex.needsUpdate = true;
           mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: terrainTex }));
+          staticCollisionMeshes.push({ obj, mesh, type: 'terrain' });
           break;
         }
-        case 'directionalLight': { const l = new THREE.DirectionalLight(0xffffff, 1); l.position.set(pos.x, pos.y, pos.z); scene.add(l); return; }
-        case 'pointLight': { const l = new THREE.PointLight(0xffffff, 1, 20); l.position.set(pos.x, pos.y, pos.z); scene.add(l); return; }
+        case 'directionalLight': {
+          const lp = obj.lightProps || {};
+          const l = new THREE.DirectionalLight(lp.color || '#ffffff', lp.intensity ?? 1);
+          l.position.set(pos.x, pos.y, pos.z);
+          if (lp.castShadow) l.castShadow = true;
+          scene.add(l);
+          return;
+        }
+        case 'pointLight': {
+          const lp = obj.lightProps || {};
+          const l = new THREE.PointLight(lp.color || '#ffffff', lp.intensity ?? 5, lp.range ?? 500);
+          l.position.set(pos.x, pos.y, pos.z);
+          if (lp.castShadow) l.castShadow = true;
+          scene.add(l);
+          return;
+        }
+        case 'spotlight': {
+          const lp = obj.lightProps || {};
+          const l = new THREE.SpotLight(lp.color || '#ffffff', lp.intensity ?? 5);
+          l.distance = lp.range ?? 500;
+          if (lp.angle) l.angle = THREE.MathUtils.degToRad(lp.angle);
+          l.position.set(pos.x, pos.y, pos.z);
+          if (lp.castShadow) l.castShadow = true;
+          scene.add(l);
+          return;
+        }
         default: return;
       }
 
@@ -231,7 +275,6 @@ export default function PlayMode({ navigate }) {
         scene.add(mesh);
         // Physics simulation for cubes and spheres if enabled
         if (obj.simulatePhysics && (obj.type === 'cube' || obj.type === 'sphere')) {
-          // Will be added after physics is initialised
           scenePhysicsBodies.push({ obj, mesh });
         }
       }
@@ -240,6 +283,24 @@ export default function PlayMode({ navigate }) {
     // Physics
     const physics = new PhysicsManager();
     physics.addGroundPlane();
+
+    // Add static physics bodies for planes and terrains so player/AI can stand on them
+    staticCollisionMeshes.forEach(({ obj, mesh }) => {
+      const scl = obj.scale || { x: 1, y: 1, z: 1 };
+      const pos = obj.position || { x: 0, y: 0, z: 0 };
+      if (obj.type === 'terrain') {
+        // Approximate terrain with a large flat static box (average height 0)
+        // A precise heightfield would require cannon-es Heightfield shape
+        const hw = 50 * scl.x;
+        const hd = 50 * scl.z;
+        physics.addStaticBox('static_' + obj.id, { x: pos.x, y: pos.y - 0.25, z: pos.z }, { x: hw, y: 0.25, z: hd });
+      } else if (obj.type === 'plane') {
+        // Flat static box for plane geometry (10x10 in model space)
+        const hw = 5 * scl.x;
+        const hd = 5 * scl.z;
+        physics.addStaticBox('static_' + obj.id, { x: pos.x, y: pos.y - 0.1, z: pos.z }, { x: hw, y: 0.1, z: hd });
+      }
+    });
 
     // Add physics bodies for objects with simulatePhysics enabled
     scenePhysicsBodies.forEach(({ obj, mesh }) => {
@@ -251,8 +312,12 @@ export default function PlayMode({ navigate }) {
     // Input
     const input = new InputManager();
 
-    // Player
+    // Player – apply speed from projectSettings
+    const walkSpeed = projectSettings?.walkSpeed ?? 12;
+    const sprintSpeed = projectSettings?.sprintSpeed ?? 24;
     const player = new PlayerController(camera, physics, input);
+    player.speed = walkSpeed;
+    player.sprintSpeed = sprintSpeed;
     player.init({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z });
 
     // ---------------------------------------------------------------------------
@@ -263,8 +328,28 @@ export default function PlayMode({ navigate }) {
     const localUsername = user?.username || 'Player';
 
     const remotePlayerMeshes = new Map();
+    // CSS2D-style name labels using canvas sprites
+    function makeNameSprite(name) {
+      const cv = document.createElement('canvas');
+      cv.width = 256; cv.height = 48;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.roundRect ? ctx.roundRect(4, 4, cv.width - 8, cv.height - 8, 6) : ctx.fillRect(4, 4, cv.width - 8, cv.height - 8);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name.substring(0, 20), cv.width / 2, cv.height / 2);
+      const tex = new THREE.CanvasTexture(cv);
+      const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.scale.set(2.0, 0.4, 1);
+      sprite.userData.isNameLabel = true;
+      return sprite;
+    }
 
-    function createRemotePlayerMesh(pid) {
+    function createRemotePlayerMesh(pid, username) {
       const group = new THREE.Group();
       const body = new THREE.Mesh(
         new THREE.CapsuleGeometry(0.3, 1.0, 4, 8),
@@ -272,6 +357,10 @@ export default function PlayMode({ navigate }) {
       );
       body.position.y = 0.8;
       group.add(body);
+      // Name label above player head (only visible to other players)
+      const label = makeNameSprite(username || pid);
+      label.position.y = 2.4;
+      group.add(label);
       group.userData.playerId = pid;
       scene.add(group);
       return group;
@@ -281,9 +370,9 @@ export default function PlayMode({ navigate }) {
 
     net.onRoomState = (players) => {
       players.forEach(p => {
-        if (!remotePlayerMeshes.has(p.player_id)) {
+        if (p.player_id !== localPlayerId && !remotePlayerMeshes.has(p.player_id)) {
           remotePlayerMeshes.set(p.player_id, {
-            mesh: createRemotePlayerMesh(p.player_id),
+            mesh: createRemotePlayerMesh(p.player_id, p.username),
             targetPos: p.position || { x: 0, y: 0, z: 0 },
             targetRotY: p.rotation?.y || 0,
           });
@@ -294,9 +383,9 @@ export default function PlayMode({ navigate }) {
     };
 
     net.onPlayerJoined = (p) => {
-      if (!remotePlayerMeshes.has(p.player_id)) {
+      if (p.player_id !== localPlayerId && !remotePlayerMeshes.has(p.player_id)) {
         remotePlayerMeshes.set(p.player_id, {
-          mesh: createRemotePlayerMesh(p.player_id),
+          mesh: createRemotePlayerMesh(p.player_id, p.username),
           targetPos: p.position || { x: 0, y: 0, z: 0 },
           targetRotY: p.rotation?.y || 0,
         });
@@ -384,6 +473,12 @@ export default function PlayMode({ navigate }) {
       }).catch(() => {});
     });
 
+    // AI spawn points – spawn enemies up to maxEnemies at spawnRate interval
+    const aiSpawnTimers = new Map(); // spawnPointId → { count, nextSpawn }
+    aiSpawnPoints.forEach(sp => {
+      aiSpawnTimers.set(sp.id, { count: 0, nextSpawn: 0 });
+    });
+
     let aiPollTimer = null;
     // AI target positions for smooth interpolation
     const aiTargetPositions = new Map(); // agent_id → {x,y,z}
@@ -407,6 +502,10 @@ export default function PlayMode({ navigate }) {
             dyingBots.set(agent.agent_id, { mesh: m, elapsed: 0 });
           }
           aiTargetPositions.delete(agent.agent_id);
+          // Decrement count for the spawn point tracking
+          aiSpawnTimers.forEach((v, spId) => {
+            if (agent.agent_id.startsWith(`aisp_${spId}_`)) v.count = Math.max(0, v.count - 1);
+          });
           return;
         }
         getOrCreateAIMesh(agent.agent_id, agent.type);
@@ -594,18 +693,21 @@ export default function PlayMode({ navigate }) {
 
     // Kill volume check
     let killCooldown = false;
+    let isDead = false;
     function checkKillVolumes() {
-      if (!player.body || killCooldown) return;
+      if (!player.body || killCooldown || isDead) return;
       const px = player.body.position.x, py = player.body.position.y, pz = player.body.position.z;
       for (const kv of killVolumes) {
         const hw = (kv.scale.x || 2) / 2, hh = (kv.scale.y || 2) / 2, hd = (kv.scale.z || 2) / 2;
         if (Math.abs(px - kv.position.x) < hw && Math.abs(py - kv.position.y) < hh && Math.abs(pz - kv.position.z) < hd) {
           killCooldown = true;
-          const newHealth = player.takeDamage(100);
-          setHealth(newHealth);
-          setKillMessage(kv.message);
+          player.health = 0;
+          setHealth(0);
+          isDead = true;
+          setDeathMessage(kv.message);
           setTimeout(() => {
-            setKillMessage('');
+            setDeathMessage('');
+            isDead = false;
             player.respawn({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z });
             player.health = 100;
             setHealth(100);
@@ -617,23 +719,73 @@ export default function PlayMode({ navigate }) {
       }
     }
 
+    function checkPlayerDeath() {
+      if (!player.body || killCooldown || isDead) return;
+      if (player.health <= 0) {
+        killCooldown = true;
+        isDead = true;
+        setDeathMessage('You died! Respawning...');
+        setTimeout(() => {
+          setDeathMessage('');
+          isDead = false;
+          player.respawn({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z });
+          player.health = 100;
+          setHealth(100);
+          if (net.isConnected) net.sendRespawn({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z });
+          killCooldown = false;
+        }, 2000);
+      }
+    }
+
     // Animation loop
     let animId;
     let last = performance.now();
     let bobPhase = 0;
     let footstepAccum = 0;
+    let gameTime = 0;
     function animate() {
       animId = requestAnimationFrame(animate);
       const now = performance.now();
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
+      gameTime += dt;
 
       player.update(dt);
       physics.step(dt);
       updateProjectiles(dt);
       checkKillVolumes();
       checkAICollisions(dt);
+      checkPlayerDeath();
       setHealth(player.health);
+
+      // AI spawn point logic
+      aiSpawnPoints.forEach(sp => {
+        const timerState = aiSpawnTimers.get(sp.id);
+        if (!timerState) return;
+        if (timerState.count < sp.maxEnemies && gameTime >= timerState.nextSpawn) {
+          timerState.count++;
+          timerState.nextSpawn = gameTime + sp.spawnRate;
+          const agentId = `aisp_${sp.id}_${Date.now()}`;
+          getOrCreateAIMesh(agentId, sp.aiType);
+          const token = getToken();
+          // Spawn slightly randomized around the spawn point
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 1 + Math.random() * 2;
+          fetch(`/api/rooms/${roomId}/ai/spawn`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+            body: JSON.stringify({
+              agent_id: agentId,
+              type: sp.aiType,
+              position: {
+                x: sp.position.x + Math.cos(angle) * radius,
+                y: sp.position.y,
+                z: sp.position.z + Math.sin(angle) * radius,
+              },
+            }),
+          }).catch(() => {});
+        }
+      });
 
       // Camera bob + footsteps based on movement speed
       if (player.body) {
@@ -803,6 +955,14 @@ export default function PlayMode({ navigate }) {
       {killMessage && (
         <div style={{ position: 'absolute', top: '30%', left: '50%', transform: 'translateX(-50%)', color: 'red', fontSize: '22px', fontWeight: 'bold', textShadow: '0 0 6px black', textAlign: 'center' }}>
           {killMessage}
+        </div>
+      )}
+
+      {/* Death / respawn message */}
+      {deathMessage && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', pointerEvents: 'none' }}>
+          <div style={{ color: '#ff4444', fontSize: '36px', fontWeight: 'bold', textShadow: '0 0 12px #ff0000', marginBottom: '12px' }}>💀 You Died</div>
+          <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '18px' }}>{deathMessage}</div>
         </div>
       )}
 

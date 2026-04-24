@@ -2,7 +2,7 @@ import * as THREE from 'three';
 export class PlayerController {
   constructor(camera,physicsManager,inputManager){
     this.camera=camera; this.physics=physicsManager; this.input=inputManager;
-    this.health=100; this.speed=6; this.sprintSpeed=12; this.jumpVelocity=8;
+    this.health=100; this.speed=12; this.sprintSpeed=24; this.jumpVelocity=8;
     this.isGrounded=false; this.yaw=0; this.pitch=0; this.bodyId='player'; this.body=null;
     this.isCrouching=false;
     this._moveDir=new THREE.Vector3();

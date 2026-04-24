@@ -3,26 +3,65 @@
 # Run from the repo root:  bash start.sh
 # Press Ctrl+C to stop everything.
 
+set -e
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
 trap 'echo; echo "Stopping Eagle Game Engine..."; kill 0' SIGINT SIGTERM
 
-echo "============================================"
+# ── Detect LAN IP ────────────────────────────────────────────────────────────
+LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$LAN_IP" ] && LAN_IP="localhost"
+
+# ── Python / venv setup ──────────────────────────────────────────────────────
+cd "$REPO_ROOT/backend"
+
+if [ ! -d ".venv" ]; then
+  echo "Creating Python virtual environment..."
+  python3 -m venv .venv
+fi
+
+# Activate venv
+# shellcheck disable=SC1091
+source .venv/bin/activate
+
+echo "Installing / updating Python dependencies..."
+pip install -q -r requirements.txt
+
+# ── Node / npm setup ──────────────────────────────────────────────────────────
+cd "$REPO_ROOT/frontend"
+if [ ! -d "node_modules" ]; then
+  echo "Installing Node dependencies (npm install)..."
+  npm install --silent
+fi
+
+# ── Print banner ─────────────────────────────────────────────────────────────
+echo ""
+echo "============================================================"
 echo "  🦅  Eagle Game Engine"
-echo "  Backend  →  http://localhost:8000"
-echo "  Frontend →  http://localhost:5173"
+echo ""
+echo "  Backend  →  http://${LAN_IP}:8000  (also localhost:8000)"
+echo "  Frontend →  http://${LAN_IP}:5173  (also localhost:5173)"
+echo ""
+echo "  🔑  Default Admin Credentials:"
+echo "      Email:    admin@eagle.local"
+echo "      Password: admin123"
+echo "      (Change these after first login!)"
+echo ""
 echo "  Press Ctrl+C to stop."
-echo "============================================"
+echo "============================================================"
 echo ""
 
-# Start backend (Python / uvicorn)
+# ── Start backend ─────────────────────────────────────────────────────────────
 (
-  cd "$(dirname "$0")/backend"
+  cd "$REPO_ROOT/backend"
+  source .venv/bin/activate
   python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000 2>&1 \
     | while IFS= read -r line; do printf '\033[36m[backend] \033[0m%s\n' "$line"; done
 ) &
 
-# Start frontend (Vite dev server)
+# ── Start frontend ────────────────────────────────────────────────────────────
 (
-  cd "$(dirname "$0")/frontend"
+  cd "$REPO_ROOT/frontend"
   npm run dev 2>&1 \
     | while IFS= read -r line; do printf '\033[33m[frontend]\033[0m %s\n' "$line"; done
 ) &

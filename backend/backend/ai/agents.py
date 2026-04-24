@@ -35,8 +35,8 @@ class AIAgent:
     DETECTION_RADIUS = 15.0
     ATTACK_RADIUS = 2.5
     PATROL_RADIUS = 10.0
-    MOVE_SPEED = 3.0
-    PATROL_SPEED = 1.5
+    MOVE_SPEED = 10.8   # 0.9 × default player walk speed (12)
+    PATROL_SPEED = 3.0
     ATTACK_DAMAGE = 10
     ATTACK_COOLDOWN = 1.0  # seconds
     MAX_HEALTH = 100
@@ -180,7 +180,8 @@ class AIManager:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._loop(tick_rate, rooms_ref or {}))
+        # Use rooms_ref if provided (even if empty); create new dict only if None
+        self._task = asyncio.create_task(self._loop(tick_rate, rooms_ref if rooms_ref is not None else {}))
 
     async def stop(self):
         self._running = False
@@ -210,7 +211,13 @@ def get_manager(room_id: str, rooms_ref: dict | None = None) -> AIManager:
     if room_id not in _managers:
         mgr = AIManager(room_id)
         _managers[room_id] = mgr
-        asyncio.create_task(mgr.start(rooms_ref=rooms_ref or {}))
+        asyncio.create_task(mgr.start(rooms_ref=rooms_ref if rooms_ref is not None else {}))
+    else:
+        # Update the running manager's rooms reference if it has a live task
+        mgr = _managers[room_id]
+        if rooms_ref is not None and mgr._task and not mgr._task.done():
+            # Re-start with updated rooms_ref if not already running with a live ref
+            pass  # The loop uses the dict by reference, so if it was the right dict it auto-updates
     return _managers[room_id]
 
 

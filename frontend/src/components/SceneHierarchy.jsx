@@ -12,6 +12,7 @@ const TYPE_ICONS = {
   spawnPoint: '🚩',
   killVolume: '💀',
   aiBot: '🤖',
+  group: '🗂️',
 };
 
 const ADD_TYPES = [
@@ -131,8 +132,37 @@ export default function SceneHierarchy({ viewportRef }) {
       )}
 
       {selectedObjectIds.length > 1 && (
-        <div style={{ padding: '4px 12px', fontSize: '11px', color: 'var(--color-accent)', background: 'rgba(100,180,255,0.1)', marginBottom: '4px' }}>
-          {selectedObjectIds.length} objects selected (Ctrl+click to add/remove)
+        <div style={{ padding: '4px 12px 6px', fontSize: '11px', color: 'var(--color-accent)', background: 'rgba(100,180,255,0.1)', marginBottom: '4px' }}>
+          <div style={{ marginBottom: '4px' }}>{selectedObjectIds.length} objects selected (Ctrl+click to add/remove)</div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '10px', padding: '2px 8px', flex: 1 }}
+              title="Group selected objects"
+              onClick={() => {
+                const { addSceneObject, removeSceneObject: _r, updateSceneObject: _u } = useStore.getState();
+                const groupId = 'group_' + Date.now();
+                const groupName = 'Group ' + (sceneObjects.filter(o => o.type === 'group').length + 1);
+                // Compute average position
+                const selObjs = sceneObjects.filter(o => selectedObjectIds.includes(o.id));
+                const avgPos = selObjs.reduce((acc, o) => ({ x: acc.x + (o.position?.x || 0) / selObjs.length, y: acc.y + (o.position?.y || 0) / selObjs.length, z: acc.z + (o.position?.z || 0) / selObjs.length }), { x: 0, y: 0, z: 0 });
+                addSceneObject({ id: groupId, name: groupName, type: 'group', position: avgPos, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, childIds: [...selectedObjectIds] });
+                selectedObjectIds.forEach(id => useStore.getState().updateSceneObject(id, { groupId }));
+                setSelectedObjectIds([]);
+                setSelectedObjectId(groupId);
+              }}
+            >📦 Group</button>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '10px', padding: '2px 8px', flex: 1 }}
+              title="Delete all selected"
+              onClick={() => {
+                selectedObjectIds.forEach(id => { if (viewportRef?.current?.removeObject) viewportRef.current.removeObject(id); });
+                setSelectedObjectIds([]);
+                setSelectedObjectId(null);
+              }}
+            >🗑 Delete All</button>
+          </div>
         </div>
       )}
 

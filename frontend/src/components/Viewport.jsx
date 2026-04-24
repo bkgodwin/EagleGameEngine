@@ -243,6 +243,21 @@ const Viewport = forwardRef((props, ref) => {
         const nz = objInitRot.z + (axis === 'z' ? delta : 0);
         entry.mesh.rotation.set(nx, ny, nz);
         updateSceneObject(sel, { rotation: { x: nx, y: ny, z: nz } });
+        // Rotate all multi-selected objects by the same delta
+        multiSelectedIds.forEach(mid => {
+          if (mid === sel) return;
+          const me = objectMap.get(mid);
+          if (me && draggingGizmo.multiInitRotations) {
+            const initR = draggingGizmo.multiInitRotations.get(mid);
+            if (initR) {
+              const mrx = initR.x + (axis === 'x' ? delta : 0);
+              const mry = initR.y + (axis === 'y' ? delta : 0);
+              const mrz = initR.z + (axis === 'z' ? delta : 0);
+              me.mesh.rotation.set(mrx, mry, mrz);
+              updateSceneObject(mid, { rotation: { x: mrx, y: mry, z: mrz } });
+            }
+          }
+        });
       } else if (type === 'scale') {
         const screenStart = objInitPos.clone().project(camera);
         const screenEnd = objInitPos.clone().add(worldDir).project(camera);
@@ -286,11 +301,15 @@ const Viewport = forwardRef((props, ref) => {
           const sel = storeRef.current.selectedObjectId;
           const entry = objectMap.get(sel);
           if (entry) {
-            // Collect initial positions for multi-selected objects
+            // Collect initial positions and rotations for multi-selected objects
             const multiInitPositions = new Map();
+            const multiInitRotations = new Map();
             multiSelectedIds.forEach(mid => {
               const me = objectMap.get(mid);
-              if (me) multiInitPositions.set(mid, me.mesh.position.clone());
+              if (me) {
+                multiInitPositions.set(mid, me.mesh.position.clone());
+                multiInitRotations.set(mid, { x: me.mesh.rotation.x, y: me.mesh.rotation.y, z: me.mesh.rotation.z });
+              }
             });
             draggingGizmo = {
               axis: gd.gizmoAxis,
@@ -301,6 +320,7 @@ const Viewport = forwardRef((props, ref) => {
               startX: e.clientX,
               startY: e.clientY,
               multiInitPositions,
+              multiInitRotations,
             };
             // Highlight active axis meshes
             activeGizmoMeshes = [];
@@ -585,8 +605,13 @@ const Viewport = forwardRef((props, ref) => {
       });
     }
 
+    // Track multi-select helper boxes (separate from the primary selectionBox)
+    let multiSelectionBoxes = [];
+
     function clearSelection() {
       if (selectionBox) { scene.remove(selectionBox); selectionBox = null; }
+      multiSelectionBoxes.forEach(h => scene.remove(h));
+      multiSelectionBoxes = [];
       gizmoGroup.clear();
     }
 
@@ -599,6 +624,17 @@ const Viewport = forwardRef((props, ref) => {
       helper.userData.isHelper = true;
       scene.add(helper);
       selectionBox = helper;
+      // Draw selection boxes for all other multi-selected objects
+      multiSelectedIds.forEach(mid => {
+        if (mid === id) return;
+        const me = objectMap.get(mid);
+        if (!me) return;
+        const mb = new THREE.Box3().setFromObject(me.mesh);
+        const mh = new THREE.Box3Helper(mb, 0xe63946);
+        mh.userData.isHelper = true;
+        scene.add(mh);
+        multiSelectionBoxes.push(mh);
+      });
       // Position gizmo group at object center, build gizmos at local origin
       gizmoGroup.position.copy(entry.mesh.position);
       const mode = storeRef.current.editorMode;
@@ -639,7 +675,7 @@ const Viewport = forwardRef((props, ref) => {
           break;
         }
         case 'pointLight': {
-          const light = new THREE.PointLight(0xffffff, 1, 20);
+          const light = new THREE.PointLight(0xffffff, 5, 500);
           const icon = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
           const group = new THREE.Group();
           group.add(light); group.add(icon);
@@ -647,7 +683,8 @@ const Viewport = forwardRef((props, ref) => {
           break;
         }
         case 'spotlight': {
-          const light = new THREE.SpotLight(0xffffff, 1);
+          const light = new THREE.SpotLight(0xffffff, 5);
+          light.distance = 500;
           const icon = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.5, 8), new THREE.MeshBasicMaterial({ color: 0xffcc00 }));
           const group = new THREE.Group();
           group.add(light); group.add(icon);
@@ -828,13 +865,16 @@ const Viewport = forwardRef((props, ref) => {
     let animId;
     let lastSelectedId = null;
     let lastEditorMode = null;
+    let lastMultiSize = 0;
     function animate() {
       animId = requestAnimationFrame(animate);
       const { selectedObjectId: sel, editorMode: mode } = storeRef.current;
-      // Refresh gizmos if selection or mode changed
-      if (sel !== lastSelectedId || mode !== lastEditorMode) {
+      // Refresh gizmos if selection, mode, or multi-select set changed
+      const multiSize = multiSelectedIds.size;
+      if (sel !== lastSelectedId || mode !== lastEditorMode || multiSize !== lastMultiSize) {
         lastSelectedId = sel;
         lastEditorMode = mode;
+        lastMultiSize = multiSize;
         if (sel) selectMesh(sel);
         else clearSelection();
       }
@@ -847,6 +887,17 @@ const Viewport = forwardRef((props, ref) => {
           if (selectionBox?.box) selectionBox.box.copy(box3);
           // Track gizmo group to object position
           gizmoGroup.position.copy(entry.mesh.position);
+          // Update multi-select boxes
+          let mbi = 0;
+          multiSelectedIds.forEach(mid => {
+            if (mid === sel) return;
+            const me = objectMap.get(mid);
+            if (me && multiSelectionBoxes[mbi]) {
+              const mb = new THREE.Box3().setFromObject(me.mesh);
+              multiSelectionBoxes[mbi].box.copy(mb);
+              mbi++;
+            }
+          });
         }
       }
       renderer.render(scene, camera);
@@ -1013,8 +1064,10 @@ const Viewport = forwardRef((props, ref) => {
         const storeObj = storeRef.current.sceneObjects.find(o => o.id === id);
         if (storeObj) {
           ['tags', 'lightProps', 'terrainTool', 'brushSize', 'brushStrength',
-           'spawnIndex', 'deathMessage', 'aiType', 'aiHealth', 'patrolRadius', 'detectRadius',
-           'attackDamage', 'simulatePhysics', 'enableCollision', 'textureUrl', 'textureRepeat'].forEach(k => {
+           'spawnIndex', 'isAiSpawn', 'aiSpawnType', 'aiSpawnMaxEnemies', 'aiSpawnRate',
+           'deathMessage', 'aiType', 'aiHealth', 'patrolRadius', 'detectRadius',
+           'attackDamage', 'simulatePhysics', 'enableCollision', 'textureUrl', 'textureRepeat',
+           'childIds', 'groupId'].forEach(k => {
             if (storeObj[k] !== undefined) obj[k] = storeObj[k];
           });
         }

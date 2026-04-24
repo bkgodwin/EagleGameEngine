@@ -52,6 +52,8 @@ export default function Dashboard({ navigate }) {
   async function handleOpen(proj) {
     try {
       const full = await getProject(proj.id);
+      // Clear existing objects first to prevent overlap from previous project
+      setSceneObjects([]);
       setCurrentProject(full);
       const objs = full.data?.objects || [];
       setSceneObjects(objs);
