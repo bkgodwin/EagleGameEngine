@@ -75,13 +75,13 @@ const Viewport = forwardRef((props, ref) => {
   const stateRef = useRef({});
   const {
     addSceneObject, removeSceneObject, updateSceneObject,
-    setSelectedObjectId, selectedObjectId, sceneObjects,
+    setSelectedObjectId, setSelectedObjectIds, selectedObjectId, selectedObjectIds, sceneObjects,
     editorMode, addLog, currentProject, settings, snapSettings, globalLighting,
   } = useStore();
 
   // Keep a ref to the latest store values accessible inside closures
   const storeRef = useRef({});
-  storeRef.current = { selectedObjectId, editorMode, sceneObjects, settings, snapSettings, globalLighting, currentProject };
+  storeRef.current = { selectedObjectId, selectedObjectIds, editorMode, sceneObjects, settings, snapSettings, globalLighting, currentProject };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -469,8 +469,11 @@ const Viewport = forwardRef((props, ref) => {
             } else {
               multiSelectedIds.add(id);
             }
+            // Sync to store
+            setSelectedObjectIds([...multiSelectedIds]);
           } else {
             multiSelectedIds.clear();
+            setSelectedObjectIds([]);
           }
           setSelectedObjectId(id);
           selectMesh(id);
@@ -488,6 +491,8 @@ const Viewport = forwardRef((props, ref) => {
         }
       } else {
         setSelectedObjectId(null);
+        setSelectedObjectIds([]);
+        multiSelectedIds.clear();
         clearSelection();
       }
     };
@@ -866,9 +871,19 @@ const Viewport = forwardRef((props, ref) => {
     let lastSelectedId = null;
     let lastEditorMode = null;
     let lastMultiSize = 0;
+    let lastStoreMultiStr = '';
     function animate() {
       animId = requestAnimationFrame(animate);
-      const { selectedObjectId: sel, editorMode: mode } = storeRef.current;
+      const { selectedObjectId: sel, selectedObjectIds: storeMulti, editorMode: mode } = storeRef.current;
+
+      // Sync store's selectedObjectIds into the local multiSelectedIds set
+      const storeMultiStr = (storeMulti || []).join(',');
+      if (storeMultiStr !== lastStoreMultiStr) {
+        lastStoreMultiStr = storeMultiStr;
+        multiSelectedIds.clear();
+        (storeMulti || []).forEach(id => multiSelectedIds.add(id));
+      }
+
       // Refresh gizmos if selection, mode, or multi-select set changed
       const multiSize = multiSelectedIds.size;
       if (sel !== lastSelectedId || mode !== lastEditorMode || multiSize !== lastMultiSize) {
