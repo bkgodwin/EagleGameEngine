@@ -78,6 +78,17 @@ export default function SceneHierarchy({ viewportRef }) {
   }
 
   function handleItemClick(e, obj) {
+    // Groups have no 3D mesh – clicking them selects all their children instead.
+    if (obj.type === 'group') {
+      const childIds = obj.childIds || [];
+      const firstChild = childIds[0] || null;
+      setSelectedObjectIds(childIds);
+      setSelectedObjectId(firstChild);
+      if (firstChild && viewportRef?.current?.selectObject) {
+        viewportRef.current.selectObject(firstChild);
+      }
+      return;
+    }
     if (e.ctrlKey || e.metaKey) {
       // Ctrl+click: toggle in multi-select
       const newIds = selectedObjectIds.includes(obj.id)
@@ -140,7 +151,7 @@ export default function SceneHierarchy({ viewportRef }) {
               style={{ fontSize: '10px', padding: '2px 8px', flex: 1 }}
               title="Group selected objects"
               onClick={() => {
-                const { addSceneObject, removeSceneObject: _r, updateSceneObject: _u } = useStore.getState();
+                const { addSceneObject } = useStore.getState();
                 const groupId = 'group_' + Date.now();
                 const groupName = 'Group ' + (sceneObjects.filter(o => o.type === 'group').length + 1);
                 // Compute average position
@@ -148,8 +159,14 @@ export default function SceneHierarchy({ viewportRef }) {
                 const avgPos = selObjs.reduce((acc, o) => ({ x: acc.x + (o.position?.x || 0) / selObjs.length, y: acc.y + (o.position?.y || 0) / selObjs.length, z: acc.z + (o.position?.z || 0) / selObjs.length }), { x: 0, y: 0, z: 0 });
                 addSceneObject({ id: groupId, name: groupName, type: 'group', position: avgPos, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, childIds: [...selectedObjectIds] });
                 selectedObjectIds.forEach(id => useStore.getState().updateSceneObject(id, { groupId }));
-                setSelectedObjectIds([]);
-                setSelectedObjectId(groupId);
+                // Keep children selected so they remain visible in the viewport.
+                // Set primary to first child so gizmos work correctly.
+                const firstChild = selectedObjectIds[0] || null;
+                setSelectedObjectId(firstChild);
+                // selectedObjectIds stays unchanged (children remain highlighted)
+                if (firstChild && viewportRef?.current?.selectObject) {
+                  viewportRef.current.selectObject(firstChild);
+                }
               }}
             >📦 Group</button>
             <button

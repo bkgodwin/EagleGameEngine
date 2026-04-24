@@ -80,4 +80,8 @@ export const useStore = create((set) => ({
 
   onlineCount: 0,
   setOnlineCount: (n) => set({ onlineCount: n }),
+
+  // When set, PlayMode connects to this room instead of project_<id>
+  joinRoomId: null,
+  setJoinRoomId: (id) => set({ joinRoomId: id }),
 }));

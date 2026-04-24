@@ -99,7 +99,7 @@ export default function PlayMode({ navigate }) {
   const [hitMarker, setHitMarker] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [speed, setSpeed] = useState(0);
-  const { setIsPlaying, sceneObjects, addLog, currentProject, user, setOnlineCount, globalLighting, projectSettings } = useStore();
+  const { setIsPlaying, sceneObjects, addLog, currentProject, user, setOnlineCount, globalLighting, projectSettings, joinRoomId, setJoinRoomId } = useStore();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -289,17 +289,50 @@ export default function PlayMode({ navigate }) {
       const scl = obj.scale || { x: 1, y: 1, z: 1 };
       const pos = obj.position || { x: 0, y: 0, z: 0 };
       if (obj.type === 'terrain') {
-        // Approximate terrain with a large static box.
-        // The Y offset of -0.25 matches the 0.25 half-height of the box so its
-        // top face sits at the terrain's world-space Y origin.
-        const hw = 50 * scl.x;
-        const hd = 50 * scl.z;
-        physics.addStaticBox('static_' + obj.id, { x: pos.x, y: pos.y - 0.25, z: pos.z }, { x: hw, y: 0.25, z: hd });
+        if (obj.heightData && obj.heightData.length > 0) {
+          // Use a per-vertex heightfield so sculpted terrain has accurate collision.
+          const segments = 64;
+          const worldWidth = 100 * scl.x;
+          const worldDepth = 100 * scl.z;
+          physics.addTerrainHeightfield(
+            'static_' + obj.id,
+            { x: pos.x, y: pos.y, z: pos.z },
+            new Float32Array(obj.heightData),
+            segments,
+            worldWidth,
+            worldDepth
+          );
+        } else {
+          // Flat terrain – use a simple static box.
+          const hw = 50 * scl.x;
+          const hd = 50 * scl.z;
+          physics.addStaticBox('static_' + obj.id, { x: pos.x, y: pos.y - 0.25, z: pos.z }, { x: hw, y: 0.25, z: hd });
+        }
       } else if (obj.type === 'plane') {
         // Flat static box for plane geometry (10x10 in model space)
         const hw = 5 * scl.x;
         const hd = 5 * scl.z;
         physics.addStaticBox('static_' + obj.id, { x: pos.x, y: pos.y - 0.1, z: pos.z }, { x: hw, y: 0.1, z: hd });
+      }
+    });
+
+    // Add static collision bodies for solid scene objects that don't simulate physics.
+    // Without these the player and projectiles pass straight through them.
+    sceneObjects.forEach(obj => {
+      if (obj.simulatePhysics) return; // handled below as dynamic
+      const pos = obj.position || { x: 0, y: 0, z: 0 };
+      const scl = obj.scale || { x: 1, y: 1, z: 1 };
+      const rot = obj.rotation || { x: 0, y: 0, z: 0 };
+      if (obj.type === 'cube') {
+        const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+        physics.addStaticBox(
+          'static_' + obj.id,
+          { x: pos.x, y: pos.y, z: pos.z },
+          { x: scl.x * 0.5, y: scl.y * 0.5, z: scl.z * 0.5 },
+          { x: quat.x, y: quat.y, z: quat.z, w: quat.w }
+        );
+      } else if (obj.type === 'sphere') {
+        physics.addStaticSphere('static_' + obj.id, { x: pos.x, y: pos.y, z: pos.z }, scl.x * 0.5);
       }
     });
 
@@ -324,7 +357,13 @@ export default function PlayMode({ navigate }) {
     // ---------------------------------------------------------------------------
     // Multiplayer
     // ---------------------------------------------------------------------------
-    const roomId = currentProject ? `project_${currentProject.id}` : 'default';
+    // If the user joined from the server browser, use that room ID; otherwise
+    // derive one from the current project so every player in the same project
+    // lands in the same room automatically.
+    const storeState = useStore.getState();
+    const overrideRoomId = storeState.joinRoomId;
+    if (overrideRoomId) storeState.setJoinRoomId(null); // consume the override
+    const roomId = overrideRoomId || (currentProject ? `project_${currentProject.id}` : 'default');
     const localPlayerId = user?.id ? `player_${user.id}_${Date.now()}` : `guest_${Math.random().toString(36).slice(2, 8)}`;
     const localUsername = user?.username || 'Player';
 
@@ -526,7 +565,11 @@ export default function PlayMode({ navigate }) {
     canvas.addEventListener('click', requestLock);
 
     const onPointerLockChange = () => {
-      setIsLocked(document.pointerLockElement === canvas);
+      const locked = document.pointerLockElement === canvas;
+      setIsLocked(locked);
+      // Clear held key/button state when pointer lock is released so the player
+      // doesn't keep moving (Escape key press doesn't always fire keyup events).
+      if (!locked) input.clearKeys();
     };
     document.addEventListener('pointerlockchange', onPointerLockChange);
 

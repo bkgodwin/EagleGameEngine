@@ -32,7 +32,7 @@ class AIState:
 class AIAgent:
     """Simple NPC with position-based FSM."""
 
-    DETECTION_RADIUS = 15.0
+    DETECTION_RADIUS = 35.0
     ATTACK_RADIUS = 2.5
     PATROL_RADIUS = 10.0
     MOVE_SPEED = 10.8   # 0.9 × default player walk speed (12)
