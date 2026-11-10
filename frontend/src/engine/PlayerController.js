@@ -40,6 +40,19 @@ export class PlayerController {
     if(this.input.isKeyDown('KeyS')||this.input.isKeyDown('s'))this._moveDir.addScaledVector(fwd,-spd);
     if(this.input.isKeyDown('KeyA')||this.input.isKeyDown('a'))this._moveDir.addScaledVector(right,-spd);
     if(this.input.isKeyDown('KeyD')||this.input.isKeyDown('d'))this._moveDir.addScaledVector(right,spd);
+    // Contact-plane projection: remove any component of the desired move direction that points
+    // INTO a currently-active collision surface.  Without this, directly setting velocity.x/z
+    // every frame overrides the physics solver's collision response and the player tunnels through
+    // static bodies at typical movement speeds (12–24 m/s).
+    // normals[] each point AWAY from the colliding surface toward open space.
+    const normals=this.physics.getContactNormalsForBody(this.bodyId);
+    for(const n of normals){
+      // Skip floor / ceiling contacts (normal mostly vertical) – those don't restrict XZ movement.
+      if(Math.abs(n.y)>0.7)continue;
+      // dot < 0 → _moveDir has a component going INTO this surface; project it out.
+      const dot=this._moveDir.x*n.x+this._moveDir.z*n.z;
+      if(dot<0){this._moveDir.x-=dot*n.x;this._moveDir.z-=dot*n.z;}
+    }
     this.body.velocity.x=this._moveDir.x; this.body.velocity.z=this._moveDir.z;
     if((this.input.isKeyDown('Space')||this.input.isKeyDown(' '))&&this.isGrounded&&!isCrouching){this.body.velocity.y=this.jumpVelocity;this.isGrounded=false;this._groundedFrames=0;}
     const eyeHeight=isCrouching?0.3:0.8;
